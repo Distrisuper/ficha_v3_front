@@ -6,6 +6,7 @@ import type { Articulo, JobEventDto, Remito } from '../types/api';
 import { money, parseMoneyInput } from '../utils/money';
 import { colorFor } from '../utils/colors';
 import { PENDIENTES_ESTADOS } from '../utils/estados';
+import { useSessionBoolean } from '../hooks/useSessionState';
 
 type TipoComp = 'factura' | 'remito';
 type Status = 'idle' | 'uploading' | 'processing' | 'done' | 'error';
@@ -30,7 +31,7 @@ export function NuevoPage({ onGoToPendientes }: Props) {
   const [editCell, setEditCell] = useState<{ remitoId: string; itemId: string; field: keyof Articulo } | null>(null);
   const [approving, setApproving] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
-  const [pendCollapsed, setPendCollapsed] = useState(false);
+  const [pendCollapsed, setPendCollapsed] = useSessionBoolean('ficha_pend_collapsed', false);
 
   const closeSseRef = useRef<(() => void) | null>(null);
   useEffect(() => () => closeSseRef.current?.(), []);

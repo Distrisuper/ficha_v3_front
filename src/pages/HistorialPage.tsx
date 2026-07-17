@@ -5,7 +5,7 @@ import { HISTORIAL_ESTADOS } from '../utils/estados';
 import type { Remito } from '../types/api';
 
 export function HistorialPage() {
-  const { remitos, remitosLoading, remitosError, reloadRemitos, proveedores } = useData();
+  const { remitos: remitosHistory, remitosLoading, remitosError, reloadRemitos, proveedores } = useData();
 
   // Los proveedores ya se cargan al arrancar (DataContext). El historial se mantiene
   // "afuera" de la carga inicial: sus remitos se piden al abrir esta pestaña.
@@ -18,10 +18,10 @@ export function HistorialPage() {
 
   const historial = useMemo(
     () =>
-      remitos
+      remitosHistory
         .filter((r) => HISTORIAL_ESTADOS.has(r.estado))
         .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
-    [remitos],
+    [remitosHistory],
   );
 
   return (

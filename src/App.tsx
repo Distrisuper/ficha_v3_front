@@ -9,6 +9,7 @@ import { PendientesPage } from './pages/PendientesPage';
 import { HistorialPage } from './pages/HistorialPage';
 import { ConfiguracionPage } from './pages/ConfiguracionPage';
 import { PENDIENTES_ESTADOS } from './utils/estados';
+import { useSessionBoolean } from './hooks/useSessionState';
 
 const TITLES: Record<TabKey, [string, string]> = {
   nuevo: ['Ficha', 'CARGA DE COMPROBANTES · V3'],
@@ -21,7 +22,7 @@ function Shell() {
   const { auth } = useAuth();
   const { remitos } = useData();
   const [tab, setTab] = useState<TabKey>('nuevo');
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useSessionBoolean('ficha_sidebar_collapsed', false);
   const [focusRemitoId, setFocusRemitoId] = useState<string | null>(null);
 
   const pendCount = useMemo(() => remitos.filter((r) => PENDIENTES_ESTADOS.has(r.estado)).length, [remitos]);

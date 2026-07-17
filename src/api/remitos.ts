@@ -20,9 +20,10 @@ export const remitosApi = {
   get: (id: UUID) => api.get<Remito | null>(`/remitos/${id}`),
   approve: (id: UUID) => api.patch<Remito>(`/remitos/${id}/approve`),
   updateTotal: (id: UUID, total: number) => api.patch<Remito>(`/remitos/${id}/total`, { total }),
-  // Backend stub: PATCH /remitos/:id/items no persiste hoy (ver invoice_front README / aviso en UI).
+  // Backend stub: PATCH /remitos/:id/items no persiste hoy (ver aviso en UI).
   updateItems: (id: UUID, items: unknown[]) => api.patch<Remito>(`/remitos/${id}/items`, items),
-  // Backend stub: no-op en el servicio (submitMercaderia está vacío).
-  submitMercaderia: (id: UUID) => api.post<void>(`/remitos/submit-mercaderia/${id}`),
+  // Envía los UUID de los artículos marcados para que el back procese la carga a stock.
+  submitMercaderia: (id: UUID, articulos: string[]) =>
+    api.post<void>(`/remitos/submit-mercaderia/${id}`, { articulos }),
   remove: (id: UUID) => api.delete<void>(`/remitos/${id}`),
 };
