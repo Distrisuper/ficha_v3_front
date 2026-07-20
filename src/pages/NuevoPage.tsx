@@ -15,26 +15,62 @@ interface Props {
   onGoToPendientes: (remitoId?: string) => void;
 }
 
+const STORAGE_KEY = 'ficha_remitos_procesados';
+const ORIGINAL_KEY = 'ficha_remitos_original';
+
+function loadStored(key: string): Remito[] {
+  try {
+    const raw = localStorage.getItem(key);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
 export function NuevoPage({ onGoToPendientes }: Props) {
   const { proveedores, sucursales, sucursalId, setSucursal, remitos, reloadRemitos } = useData();
 
   const [tipoComp, setTipoComp] = useState<TipoComp>('factura');
   const [proveedorId, setProveedorId] = useState('');
   const [file, setFile] = useState<File | null>(null);
-  const [status, setStatus] = useState<Status>('idle');
+  const [status, setStatus] = useState<Status>(() => (loadStored(STORAGE_KEY).length > 0 ? 'done' : 'idle'));
   const [log, setLog] = useState<{ text: string; type: string }[]>([]);
   const [pct, setPct] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const [remitosCargados, setRemitosCargados] = useState<Remito[]>([]);
+  const [remitosCargados, setRemitosCargados] = useState<Remito[]>(() => loadStored(STORAGE_KEY));
+  const [originalRemitos, setOriginalRemitos] = useState<Remito[]>(() => loadStored(ORIGINAL_KEY));
   const [remitoSel, setRemitoSel] = useState<string | null>(null);
   const [editCell, setEditCell] = useState<{ remitoId: string; itemId: string; field: keyof Articulo } | null>(null);
+  const [editHeader, setEditHeader] = useState<{ id: string; field: 'facturaNro' | 'remitoNro' } | null>(null);
   const [approving, setApproving] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [pendCollapsed, setPendCollapsed] = useSessionBoolean('ficha_pend_collapsed', false);
 
   const closeSseRef = useRef<(() => void) | null>(null);
   useEffect(() => () => closeSseRef.current?.(), []);
+
+  // Persistimos el/los remito(s) procesados en localStorage para que sobrevivan a
+  // recargas o cambios de pestaña. Se limpia solo al Procesar (aprobar) o al Descartar.
+  useEffect(() => {
+    try {
+      if (remitosCargados.length > 0) localStorage.setItem(STORAGE_KEY, JSON.stringify(remitosCargados));
+      else localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      // localStorage no disponible
+    }
+  }, [remitosCargados]);
+
+  useEffect(() => {
+    try {
+      if (originalRemitos.length > 0) localStorage.setItem(ORIGINAL_KEY, JSON.stringify(originalRemitos));
+      else localStorage.removeItem(ORIGINAL_KEY);
+    } catch {
+      // localStorage no disponible
+    }
+  }, [originalRemitos]);
 
   // Catálogos (proveedores/sucursales) y remitos ya se cargan en el DataContext al
   // arrancar, así que esta página solo los consume desde el context.
@@ -49,6 +85,7 @@ export function NuevoPage({ onGoToPendientes }: Props) {
     setLog([]);
     setPct(2);
     setRemitosCargados([]);
+    setOriginalRemitos([]);
     setRemitoSel(null);
     try {
       const { jobId } = await createFactura(file, sucursalId, proveedorId);
@@ -87,6 +124,7 @@ export function NuevoPage({ onGoToPendientes }: Props) {
     try {
       const data = await remitosApi.getByJobId(jobId);
       setRemitosCargados(data ?? []);
+      setOriginalRemitos(data ?? []); // snapshot original para detectar ediciones
       reloadRemitos();
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : 'No se pudo traer el resultado del procesamiento');
@@ -125,6 +163,16 @@ export function NuevoPage({ onGoToPendientes }: Props) {
     return { subtotal, percepciones, descuentos, iva, total };
   }, [scope]);
 
+  // Detección de ediciones: comparamos cada remito contra su snapshot original.
+  const originalById = useMemo(
+    () => Object.fromEntries(originalRemitos.map((r) => [r.id, r])),
+    [originalRemitos],
+  );
+  const isDirty = (r: Remito): boolean => {
+    const orig = originalById[r.id];
+    return !orig || JSON.stringify(r) !== JSON.stringify(orig);
+  };
+
   function updateArticuloLocal(remitoId: string, articuloId: string, field: keyof Articulo, value: string) {
     setRemitosCargados((prev) =>
       prev.map((r) =>
@@ -136,6 +184,12 @@ export function NuevoPage({ onGoToPendientes }: Props) {
             },
       ),
     );
+  }
+
+  // Edición local (persistida en localStorage) del Nº de factura / remito.
+  // facturaNro es compartido por todo el lote de un mismo comprobante (applyToAll).
+  function updateRemitoField(remitoId: string, field: 'facturaNro' | 'remitoNro', value: string, applyToAll = false) {
+    setRemitosCargados((prev) => prev.map((r) => (applyToAll || r.id === remitoId ? { ...r, [field]: value } : r)));
   }
 
   async function commitEdit() {
@@ -158,9 +212,16 @@ export function NuevoPage({ onGoToPendientes }: Props) {
     setApproving(true);
     setErrorMsg(null);
     try {
+      // Si hubo ediciones, mandamos el objeto completo del remito para que el back
+      // verifique/persista los cambios antes de aprobar.
+      const editados = scope.filter(isDirty);
+      if (editados.length) {
+        await Promise.all(editados.map((r) => remitosApi.update(r.id, r)));
+      }
       await Promise.all(scope.map((r) => remitosApi.approve(r.id)));
       setSuccessMsg('Comprobante(s) aprobado(s) correctamente.');
       setRemitosCargados([]);
+      setOriginalRemitos([]);
       setRemitoSel(null);
       setFile(null);
       setStatus('idle');
@@ -169,6 +230,33 @@ export function NuevoPage({ onGoToPendientes }: Props) {
       setErrorMsg(e instanceof Error ? e.message : 'No se pudo procesar el comprobante');
     } finally {
       setApproving(false);
+    }
+  }
+
+  async function handleDiscard() {
+    if (remitosCargados.length === 0) return;
+    setDiscarding(true);
+    setErrorMsg(null);
+    try {
+      const results = await Promise.allSettled(remitosCargados.map((r) => remitosApi.discard(r.id)));
+      const failed = remitosCargados.filter((_, i) => results[i].status === 'rejected');
+      const failedIds = new Set(failed.map((r) => r.id));
+      // Conservamos solo los que fallaron (y sus snapshots) para poder reintentar.
+      setRemitosCargados(failed);
+      setOriginalRemitos((prev) => prev.filter((r) => failedIds.has(r.id)));
+      if (failed.length === 0) {
+        setRemitoSel(null);
+        setStatus('idle');
+        setFile(null);
+        setSuccessMsg('Remito descartado.');
+      } else {
+        setErrorMsg('Algunos remitos no pudieron ser descartados.');
+      }
+      reloadRemitos();
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : 'No se pudo descartar el remito');
+    } finally {
+      setDiscarding(false);
     }
   }
 
@@ -284,6 +372,29 @@ export function NuevoPage({ onGoToPendientes }: Props) {
             </button>
           </div>
 
+          {status === 'done' && remitosCargados.length > 0 && (
+            <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                onClick={handleDiscard}
+                disabled={discarding}
+                title="Descartar el remito procesado"
+                style={{
+                  height: 40,
+                  padding: '0 22px',
+                  borderRadius: 8,
+                  border: '1px solid #f0c6c6',
+                  background: '#fff',
+                  color: 'var(--err)',
+                  fontWeight: 700,
+                  fontSize: 14,
+                  cursor: discarding ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {discarding ? 'Descartando…' : 'Descartar'}
+              </button>
+            </div>
+          )}
+
           {(status === 'uploading' || status === 'processing') && (
             <div style={{ marginTop: 16 }}>
               <div style={{ height: 8, background: '#eef1f6', borderRadius: 99, overflow: 'hidden', marginBottom: 10 }}>
@@ -395,22 +506,70 @@ export function NuevoPage({ onGoToPendientes }: Props) {
         <section style={{ ...cardStyle, display: 'flex', gap: 26, flexWrap: 'wrap', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 7, width: 230 }}>
-              <label style={labelStyle}>Nº Factura</label>
-              <div style={readonlyBoxStyle}>{remitosCargados[0]?.facturaNro || '—'}</div>
+              <label style={labelStyle}>Nº Factura <span style={{ fontWeight: 400, color: 'var(--muted-3)' }}>· doble clic para editar</span></label>
+              {editHeader?.field === 'facturaNro' ? (
+                <input
+                  autoFocus
+                  defaultValue={remitosCargados[0]?.facturaNro ?? ''}
+                  onBlur={(e) => {
+                    updateRemitoField(remitosCargados[0]?.id ?? '', 'facturaNro', e.target.value, true);
+                    setEditHeader(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      (e.target as HTMLInputElement).blur();
+                    } else if (e.key === 'Escape') {
+                      setEditHeader(null);
+                    }
+                  }}
+                  style={headerInputStyle}
+                />
+              ) : (
+                <div
+                  onDoubleClick={() => remitosCargados.length > 0 && setEditHeader({ id: remitosCargados[0].id, field: 'facturaNro' })}
+                  title="Doble clic para editar"
+                  style={{ ...readonlyBoxStyle, cursor: remitosCargados.length > 0 ? 'text' : 'default' }}
+                >
+                  {remitosCargados[0]?.facturaNro || '—'}
+                </div>
+              )}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 7, minWidth: 260, flex: 1 }}>
               <label style={labelStyle}>
-                Nº Remito <span style={{ fontWeight: 400, color: 'var(--muted-3)' }}>· tocá para marcar sus artículos</span>
+                Nº Remito <span style={{ fontWeight: 400, color: 'var(--muted-3)' }}>· clic para marcar sus artículos · doble clic para editar Nº</span>
               </label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-start' }}>
                 {remitosCargados.length === 0 && <span style={{ fontSize: 13, color: 'var(--muted-3)' }}>—</span>}
                 {remitosCargados.map((r, i) => {
                   const { color, light } = colorFor(i);
                   const active = remitoSel === r.id;
+                  if (editHeader?.field === 'remitoNro' && editHeader.id === r.id) {
+                    return (
+                      <input
+                        key={r.id}
+                        autoFocus
+                        defaultValue={r.remitoNro ?? ''}
+                        onBlur={(e) => {
+                          updateRemitoField(r.id, 'remitoNro', e.target.value);
+                          setEditHeader(null);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            (e.target as HTMLInputElement).blur();
+                          } else if (e.key === 'Escape') {
+                            setEditHeader(null);
+                          }
+                        }}
+                        style={{ ...headerInputStyle, width: 230, height: 34 }}
+                      />
+                    );
+                  }
                   return (
                     <button
                       key={r.id}
                       onClick={() => setRemitoSel((cur) => (cur === r.id ? null : r.id))}
+                      onDoubleClick={() => setEditHeader({ id: r.id, field: 'remitoNro' })}
+                      title="Clic: marcar artículos · Doble clic: editar Nº"
                       style={{
                         display: 'inline-flex',
                         alignItems: 'center',
@@ -463,7 +622,7 @@ export function NuevoPage({ onGoToPendientes }: Props) {
                 cursor: scope.length === 0 || approving ? 'not-allowed' : 'pointer',
               }}
             >
-              {approving ? 'Procesando…' : 'Procesar'}
+              {approving ? 'Procesando…' : 'Procesar factura'}
             </button>
           </div>
         </section>
@@ -757,6 +916,18 @@ const selectStyle: CSSProperties = {
   fontSize: 14,
   color: 'var(--ink)',
   background: '#fff',
+};
+
+const headerInputStyle: CSSProperties = {
+  height: 42,
+  border: '1px solid var(--blue)',
+  borderRadius: 8,
+  padding: '0 13px',
+  fontSize: 14,
+  color: 'var(--ink)',
+  outline: 'none',
+  background: '#fff',
+  width: '100%',
 };
 
 const readonlyBoxStyle: CSSProperties = {

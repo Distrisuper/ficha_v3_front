@@ -20,10 +20,14 @@ export const remitosApi = {
   get: (id: UUID) => api.get<Remito | null>(`/remitos/${id}`),
   approve: (id: UUID) => api.patch<Remito>(`/remitos/${id}/approve`),
   updateTotal: (id: UUID, total: number) => api.patch<Remito>(`/remitos/${id}/total`, { total }),
+  // Manda el remito completo (editado) para que el back verifique/persista los cambios.
+  update: (id: UUID, data: Partial<Remito>) => api.patch<Remito>(`/remitos/${id}`, data),
   // Backend stub: PATCH /remitos/:id/items no persiste hoy (ver aviso en UI).
   updateItems: (id: UUID, items: unknown[]) => api.patch<Remito>(`/remitos/${id}/items`, items),
   // Envía los UUID de los artículos marcados para que el back procese la carga a stock.
   submitMercaderia: (id: UUID, articulos: string[]) =>
     api.post<void>(`/remitos/submit-mercaderia/${id}`, { articulos }),
+  // Descarta un remito procesado (no aprobado). El back decide marcar/eliminar.
+  discard: (id: UUID) => api.patch<void>(`/remitos/${id}/discard`),
   remove: (id: UUID) => api.delete<void>(`/remitos/${id}`),
 };
