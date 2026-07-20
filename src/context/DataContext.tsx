@@ -3,6 +3,7 @@ import { proveedoresApi } from '../api/proveedores';
 import { sucursalesApi } from '../api/sucursales';
 import { listRemitos } from '../api/remitos';
 import type { Proveedor, Remito, Sucursal, UUID } from '../types/api';
+import { EMPTY_FILTERS, type RemitoFilters } from '../utils/filtros';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 
 interface DataContextValue {
@@ -14,6 +15,11 @@ interface DataContextValue {
   sucursalNombre: string;
   setSucursal: (id: UUID, nombre: string) => void;
   clearSucursal: () => void;
+
+  // Filtros compartidos por Pendientes/Historial. El rango de fechas además viaja
+  // en la request de remitos (ver reloadRemitos), por eso el estado vive acá.
+  filters: RemitoFilters;
+  setFilters: (f: RemitoFilters) => void;
 
   remitos: Remito[];
   // remitosHistory: Remito[];
@@ -30,6 +36,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [sucursalId, setSucursalId] = useLocalStorage('ficha_sucursal_id');
   const [sucursalNombre, setSucursalNombre] = useLocalStorage('ficha_sucursal_nombre');
   const [remitos, setRemitos] = useState<Remito[]>([]);
+  const [filters, setFilters] = useState<RemitoFilters>(EMPTY_FILTERS);
   // const [remitosHistory, setRemitosHistory] = useState<Remito[]>([]);
   const [remitosLoading, setRemitosLoading] = useState(false);
   const [remitosError, setRemitosError] = useState<string | null>(null);
@@ -44,14 +51,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setRemitosLoading(true);
     setRemitosError(null);
     try {
-      const data = await listRemitos(sucursalId || undefined);
+      const data = await listRemitos(sucursalId || undefined, {
+        tipo: filters.tipo !== 'todos' ? filters.tipo : undefined,
+        proveedorId: filters.proveedorId || undefined,
+        fechaDesde: filters.fechaDesde || undefined,
+        fechaHasta: filters.fechaHasta || undefined,
+      });
       setRemitos(data);
     } catch (e) {
       setRemitosError(e instanceof Error ? e.message : 'No se pudieron cargar los remitos');
     } finally {
       setRemitosLoading(false);
     }
-  }, [sucursalId]);
+  }, [sucursalId, filters.tipo, filters.proveedorId, filters.fechaDesde, filters.fechaHasta]);
 
   // Carga inicial al montar el provider: remitos (el badge de "Pendientes" del sidebar
   // los necesita siempre) y los catálogos de proveedores/sucursales. Los remitos además
@@ -90,6 +102,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       sucursalNombre,
       setSucursal,
       clearSucursal,
+      filters,
+      setFilters,
       remitos,
       // remitosHistory,
       remitosLoading,
@@ -104,6 +118,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       sucursalNombre,
       setSucursal,
       clearSucursal,
+      filters,
       // remitosHistory,
       remitos,
       remitosLoading,

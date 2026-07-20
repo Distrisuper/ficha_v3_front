@@ -2,9 +2,14 @@ import { useEffect, useMemo, type CSSProperties, type ReactNode } from 'react';
 import { useData } from '../context/DataContext';
 import { money, fmtDate, fmtDateTime } from '../utils/money';
 import { HISTORIAL_ESTADOS } from '../utils/estados';
+import { applyFilters, type RemitoFilters } from '../utils/filtros';
 import type { Remito } from '../types/api';
 
-export function HistorialPage() {
+interface Props {
+  filters: RemitoFilters;
+}
+
+export function HistorialPage({ filters }: Props) {
   const { remitos: remitosHistory, remitosLoading, remitosError, reloadRemitos, proveedores } = useData();
 
   // Los proveedores ya se cargan al arrancar (DataContext). El historial se mantiene
@@ -18,10 +23,11 @@ export function HistorialPage() {
 
   const historial = useMemo(
     () =>
-      remitosHistory
-        .filter((r) => HISTORIAL_ESTADOS.has(r.estado))
-        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
-    [remitosHistory],
+      applyFilters(
+        remitosHistory.filter((r) => HISTORIAL_ESTADOS.has(r.estado)),
+        filters,
+      ).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
+    [remitosHistory, filters],
   );
 
   return (

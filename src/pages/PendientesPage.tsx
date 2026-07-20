@@ -3,18 +3,23 @@ import { useData } from '../context/DataContext';
 import { remitosApi } from '../api/remitos';
 import { fmtDate, fmtCantidad } from '../utils/money';
 import { PENDIENTES_ESTADOS } from '../utils/estados';
+import { applyFilters, type RemitoFilters } from '../utils/filtros';
 import type { Remito } from '../types/api';
 
 const MAX_ITEMS_HEIGHT = 430; // ~10 filas visibles; el resto scrollea
 
 interface Props {
+  filters: RemitoFilters;
   focusId?: string | null;
   onFocusHandled?: () => void;
 }
 
-export function PendientesPage({ focusId, onFocusHandled }: Props) {
+export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
   const { remitos, remitosLoading, remitosError, reloadRemitos, proveedores } = useData();
-  const pendientes = useMemo(() => remitos.filter((r) => PENDIENTES_ESTADOS.has(r.estado)), [remitos]);
+  const pendientes = useMemo(
+    () => applyFilters(remitos.filter((r) => PENDIENTES_ESTADOS.has(r.estado)), filters),
+    [remitos, filters],
+  );
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
