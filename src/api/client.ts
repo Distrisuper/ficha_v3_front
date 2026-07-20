@@ -33,6 +33,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     const token = getToken();
     if (token) finalHeaders.set('Authorization', `Bearer ${token}`);
   }
+  console.log("mandamos a ", API_BASE, path, rest, finalHeaders);
 
   const res = await fetch(`${API_BASE}${path}`, { ...rest, headers: finalHeaders });
 
