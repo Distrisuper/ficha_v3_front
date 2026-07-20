@@ -25,5 +25,7 @@ export const remitosApi = {
   // Envía los UUID de los artículos marcados para que el back procese la carga a stock.
   submitMercaderia: (id: UUID, articulos: string[]) =>
     api.post<void>(`/remitos/submit-mercaderia/${id}`, { articulos }),
+  // Descarta un remito procesado (no aprobado). El back decide marcar/eliminar.
+  discard: (id: UUID) => api.patch<void>(`/remitos/${id}/discard`),
   remove: (id: UUID) => api.delete<void>(`/remitos/${id}`),
 };
