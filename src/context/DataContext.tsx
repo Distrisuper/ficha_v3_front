@@ -16,7 +16,7 @@ interface DataContextValue {
   clearSucursal: () => void;
 
   remitos: Remito[];
-  remitosHistory: Remito[];
+  // remitosHistory: Remito[];
   remitosLoading: boolean;
   remitosError: string | null;
   reloadRemitos: () => Promise<void>;
@@ -30,7 +30,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [sucursalId, setSucursalId] = useLocalStorage('ficha_sucursal_id');
   const [sucursalNombre, setSucursalNombre] = useLocalStorage('ficha_sucursal_nombre');
   const [remitos, setRemitos] = useState<Remito[]>([]);
-  const [remitosHistory, setRemitosHistory] = useState<Remito[]>([]);
+  // const [remitosHistory, setRemitosHistory] = useState<Remito[]>([]);
   const [remitosLoading, setRemitosLoading] = useState(false);
   const [remitosError, setRemitosError] = useState<string | null>(null);
 
@@ -72,9 +72,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
     [setSucursalId, setSucursalNombre],
   );
 
-  const handleSetHistory = useCallback((remitos: Remito[]) => {
-    setRemitosHistory(remitos);
-  }, []);
+  // const handleSetHistory = useCallback((remitos: Remito[]) => {
+  //   setRemitosHistory(remitos);
+  // }, []);
 
   const clearSucursal = useCallback(() => {
     setSucursalId('');
@@ -91,7 +91,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setSucursal,
       clearSucursal,
       remitos,
-      remitosHistory,
+      // remitosHistory,
       remitosLoading,
       remitosError,
       reloadRemitos,
@@ -104,7 +104,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       sucursalNombre,
       setSucursal,
       clearSucursal,
-      remitosHistory,
+      // remitosHistory,
       remitos,
       remitosLoading,
       remitosError,
