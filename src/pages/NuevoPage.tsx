@@ -25,6 +25,45 @@ function loadStored(key: string): Remito[] {
   }
 }
 
+// La cantidad puede venir como número o string (col char36 del back). Aceptamos coma decimal.
+function toCantidad(v: number | string): number {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+  const n = parseFloat(String(v).replace(',', '.'));
+  return Number.isNaN(n) ? 0 : n;
+}
+
+// El precio llega como número desde el back ("1234.56") pero al editarse queda como string.
+// Con coma => formato es-AR (puntos de miles, coma decimal); sin coma => punto decimal.
+function toPrecio(v: number | string): number {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+  const s = String(v).trim();
+  if (!s) return 0;
+  const n = s.includes(',') ? parseMoneyInput(s) : parseFloat(s);
+  return Number.isNaN(n) ? 0 : n;
+}
+
+const round2 = (n: number): number => Math.round((n + Number.EPSILON) * 100) / 100;
+
+// Recalcula el total por artículo (cantidad × precio), el subtotal (Σ totales) y el total
+// del remito. El IVA se recalcula proporcional a la alícuota efectiva original (iva/subtotal
+// del snapshot), dejando percepciones y bonificaciones fijas. Estos montos son los que se
+// mandan en el PATCH al procesar (ver handleProcesar).
+function recalcRemito(r: Remito, orig?: Remito): Remito {
+  const articulos = (r.articulos ?? []).map((a) => ({
+    ...a,
+    total_unitario: round2(toCantidad(a.cantidad) * toPrecio(a.precio_unitario)),
+  }));
+  const subtotal = round2(articulos.reduce((acc, a) => acc + Number(a.total_unitario || 0), 0));
+  const refSubtotal = Number(orig?.subtotal ?? r.subtotal ?? 0);
+  const refIva = Number(orig?.iva ?? r.iva ?? 0);
+  const rate = refSubtotal > 0 ? refIva / refSubtotal : 0;
+  const iva = round2(subtotal * rate);
+  const percepciones = Number(r.percepciones || 0);
+  const descuentos = Number(r.descuentos || 0);
+  const total = round2(subtotal - descuentos + percepciones + iva);
+  return { ...r, articulos, subtotal, iva, total };
+}
+
 export function NuevoPage({ tipoComp }: Props) {
   const { proveedores, sucursales, sucursalId, setSucursal, reloadRemitos } = useData();
 
@@ -170,14 +209,13 @@ export function NuevoPage({ tipoComp }: Props) {
 
   function updateArticuloLocal(remitoId: string, articuloId: string, field: keyof Articulo, value: string) {
     setRemitosCargados((prev) =>
-      prev.map((r) =>
-        r.id !== remitoId
-          ? r
-          : {
-              ...r,
-              articulos: (r.articulos ?? []).map((a) => (a.id !== articuloId ? a : { ...a, [field]: value })),
-            },
-      ),
+      prev.map((r) => {
+        if (r.id !== remitoId) return r;
+        const articulos = (r.articulos ?? []).map((a) => (a.id !== articuloId ? a : { ...a, [field]: value }));
+        const updated = { ...r, articulos };
+        // Editar cantidad/precio recalcula total del artículo, subtotal, IVA y total del remito.
+        return field === 'cantidad' || field === 'precio_unitario' ? recalcRemito(updated, originalById[remitoId]) : updated;
+      }),
     );
   }
 
@@ -324,7 +362,7 @@ export function NuevoPage({ tipoComp }: Props) {
               onClick={handleUpload}
               style={{
                 height: 42,
-                padding: '0 22px',
+                padding: '0 18px',
                 borderRadius: 8,
                 border: 'none',
                 background: canProcess ? 'var(--blue)' : '#8a94a6',
@@ -332,34 +370,42 @@ export function NuevoPage({ tipoComp }: Props) {
                 fontWeight: 600,
                 fontSize: 14,
                 cursor: canProcess ? 'pointer' : 'not-allowed',
+                whiteSpace: 'nowrap',
               }}
             >
               {status === 'uploading' || status === 'processing' ? 'Procesando…' : 'Procesar Archivo'}
             </button>
-          </div>
-
-          {status === 'done' && remitosCargados.length > 0 && (
-            <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end' }}>
+            {status === 'done' && remitosCargados.length > 0 && (
               <button
                 onClick={handleDiscard}
                 disabled={discarding}
-                title="Descartar el remito procesado"
+                title="Descartar comprobante procesado"
+                aria-label="Descartar"
                 style={{
-                  height: 40,
-                  padding: '0 22px',
+                  height: 42,
+                  width: 42,
+                  flex: 'none',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
                   borderRadius: 8,
                   border: '1px solid #f0c6c6',
                   background: '#fff',
                   color: 'var(--err)',
-                  fontWeight: 700,
-                  fontSize: 14,
                   cursor: discarding ? 'not-allowed' : 'pointer',
+                  opacity: discarding ? 0.6 : 1,
+                  padding: 0,
                 }}
               >
-                {discarding ? 'Descartando…' : 'Descartar'}
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 6h18" />
+                  <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                  <path d="M10 11v6M14 11v6" />
+                </svg>
               </button>
-            </div>
-          )}
+            )}
+          </div>
 
           {(status === 'uploading' || status === 'processing') && (
             <div style={{ marginTop: 16 }}>
@@ -460,7 +506,7 @@ export function NuevoPage({ tipoComp }: Props) {
                       align="right"
                     />
                     <span style={{ textAlign: 'right', fontWeight: 600, color: 'var(--ink-2)' }} title="Se calcula automáticamente">
-                      {money(articulo.total_unitario ?? Number(articulo.cantidad) * parseMoneyInput(String(articulo.precio_unitario)))}
+                      {money(articulo.total_unitario ?? round2(toCantidad(articulo.cantidad) * toPrecio(articulo.precio_unitario)))}
                     </span>
                   </div>
                 );

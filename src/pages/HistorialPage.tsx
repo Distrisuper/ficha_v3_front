@@ -1,4 +1,4 @@
-import { useEffect, useMemo, type CSSProperties, type ReactNode } from 'react';
+import { useMemo, type CSSProperties, type ReactNode } from 'react';
 import { useData } from '../context/DataContext';
 import { money, fmtDate, fmtDateTime } from '../utils/money';
 import { HISTORIAL_ESTADOS } from '../utils/estados';
@@ -10,13 +10,10 @@ interface Props {
 }
 
 export function HistorialPage({ filters }: Props) {
-  const { remitos: remitosHistory, remitosLoading, remitosError, reloadRemitos, proveedores } = useData();
+  const { remitos: remitosHistory, remitosLoading, remitosError, proveedores } = useData();
 
-  // Los proveedores ya se cargan al arrancar (DataContext). El historial se mantiene
-  // "afuera" de la carga inicial: sus remitos se piden al abrir esta pestaña.
-  useEffect(() => {
-    void reloadRemitos();
-  }, [reloadRemitos]);
+  // El DataContext recarga los remitos al montar y al cambiar sucursal/filtros, así que
+  // no disparamos otra recarga acá (evita requests duplicadas por cada cambio de filtro).
 
   const provName = (r: Remito) =>
     proveedores.find((p) => p.id === r.proveedorId)?.nombre ?? r.proveedor?.nombre ?? r.proveedorId ?? '—';
@@ -50,6 +47,13 @@ export function HistorialPage({ filters }: Props) {
             </tr>
           </thead>
           <tbody>
+            {remitosLoading && (
+              <tr>
+                <td colSpan={8} style={{ padding: 24, textAlign: 'center', color: 'var(--muted-3)' }}>
+                  Cargando registros…
+                </td>
+              </tr>
+            )}
             {!remitosLoading && historial.length === 0 && (
               <tr>
                 <td colSpan={8} style={{ padding: 24, textAlign: 'center', color: 'var(--muted-3)' }}>
@@ -57,7 +61,7 @@ export function HistorialPage({ filters }: Props) {
                 </td>
               </tr>
             )}
-            {historial.map((h, i) => (
+            {!remitosLoading && historial.map((h, i) => (
               <tr key={h.id} style={{ borderTop: '1px solid #f2f4f8', background: i % 2 ? '#fbfcfe' : '#ffffff' }}>
                 <td style={td}>{fmtDateTime(h.updatedAt)}</td>
                 <td style={td}>{provName(h)}</td>

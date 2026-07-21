@@ -29,10 +29,11 @@ export const hayFiltrosActivos = (f: RemitoFilters): boolean =>
 const fechaISO = (r: Remito): string => String(r.fecha ?? '').slice(0, 10);
 
 // Aplica los filtros sobre una lista ya acotada por estado (pendientes/historial).
-// La sucursal ya viene filtrada desde listRemitos (sucursal global).
+// El TIPO no se filtra acá: el back tiene su propia lógica remito/factura (el campo
+// `tipo` literal no la refleja), así que confiamos en el filtrado del back — `tipo` sólo
+// viaja como query param y dispara el refetch. La sucursal ya viene filtrada en listRemitos.
 export function applyFilters(remitos: Remito[], f: RemitoFilters): Remito[] {
   return remitos.filter((r) => {
-    if (f.tipo !== 'todos' && r.tipo !== f.tipo) return false;
     if (f.proveedorId && r.proveedorId !== f.proveedorId) return false;
     if (f.fechaDesde || f.fechaHasta) {
       const fecha = fechaISO(r);

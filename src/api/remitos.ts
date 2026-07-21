@@ -26,7 +26,13 @@ export async function listRemitos(sucursalId?: UUID, params?: ListRemitosParams)
   const data = await api.get<Remito[]>(`/remitos${query ? `?${query}` : ''}`);
   const arr = Array.isArray(data) ? data : [];
   if (!sucursalId) return arr;
-  return arr.filter((r) => r.sucursalId === sucursalId);
+  // Filtro tolerante: sólo descartamos filas con una sucursal EXPLÍCITAMENTE distinta.
+  // Si el back no incluye sucursalId en la respuesta (o lo manda anidado en `sucursal`),
+  // confiamos en que ya filtró por el query param y no las tiramos.
+  return arr.filter((r) => {
+    const sid = r.sucursalId ?? r.sucursal?.id;
+    return !sid || sid === sucursalId;
+  });
 }
 
 export const remitosApi = {
@@ -42,6 +48,8 @@ export const remitosApi = {
   // Envía los UUID de los artículos marcados para que el back procese la carga a stock.
   submitMercaderia: (id: UUID, articulos: string[]) =>
     api.post<void>(`/remitos/submit-mercaderia/${id}`, { articulos }),
+  // Envía los UUID de los artículos marcados para que el back procese la carga de la factura.
+  submitFactura: (id: UUID) => api.post<void>(`/factura/submit/${id}`),
   // Descarta un remito procesado (no aprobado). El back decide marcar/eliminar.
   discard: (id: UUID) => api.patch<void>(`/remitos/${id}/discard`),
   remove: (id: UUID) => api.delete<void>(`/remitos/${id}`),

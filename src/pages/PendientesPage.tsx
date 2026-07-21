@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useData } from '../context/DataContext';
 import { remitosApi } from '../api/remitos';
-import { fmtDate, fmtCantidad } from '../utils/money';
+import { money, fmtDate, fmtCantidad } from '../utils/money';
 import { PENDIENTES_ESTADOS } from '../utils/estados';
 import { applyFilters, type RemitoFilters } from '../utils/filtros';
 import type { Remito } from '../types/api';
@@ -28,12 +28,20 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
   // Modo edición (mostrar casillas) por remito, y selección de artículos por remito.
   const [editingIds, setEditingIds] = useState<Set<string>>(new Set());
   const [selectedByRemito, setSelectedByRemito] = useState<Record<string, Set<string>>>({});
+  // Artículos colapsados por defecto; se expanden por remito al clickear el encabezado.
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
-  // Los proveedores ya se cargan al arrancar (DataContext). Al abrir la pestaña sólo
-  // refrescamos los remitos para ver el estado más reciente.
-  useEffect(() => {
-    void reloadRemitos();
-  }, [reloadRemitos]);
+  const toggleExpanded = (id: string) =>
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  // El DataContext ya recarga los remitos al montar y cuando cambian sucursal/filtros
+  // (reloadRemitos depende de ellos). Evitamos recargar también acá para no disparar
+  // dos requests en paralelo por cada cambio de filtro (era la causa del "pantallazo").
 
   // Si venimos desde una card del panel de Nuevo, hacemos scroll hasta ese remito
   // y lo resaltamos un instante. Se espera a que la lista esté renderizada.
@@ -110,6 +118,20 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
     }
   }
 
+  async function handleCargarFactura(r: Remito) {
+    try {
+      setBusyId(r.id);
+      setNotice(null);
+      await remitosApi.submitFactura(r.id);
+      setNotice(`Remito ${r.remitoNro || r.id.slice(0, 8)}: factura cargada correctamente.`);
+      await reloadRemitos();
+    } catch (e) {
+      setNotice(e instanceof Error ? `Error: ${e.message}` : 'No se pudo cargar la factura');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 20 }}>
@@ -134,12 +156,26 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
         {!remitosLoading && pendientes.length === 0 && (
           <div style={{ fontSize: 13, color: 'var(--muted-3)', padding: '20px 0' }}>No hay remitos pendientes.</div>
         )}
-        {pendientes.map((r) => {
+        {!remitosLoading && pendientes.map((r) => {
           const editing = editingIds.has(r.id);
           const items = r.articulos ?? [];
           const selected = getSelected(r);
           const selCount = items.filter((it) => selected.has(it.id)).length;
           const allSel = items.length > 0 && selCount === items.length;
+          // Artículos colapsados por defecto; en modo edición se muestran siempre.
+          const expanded = expandedIds.has(r.id);
+          const showItems = expanded || editing;
+          // "Factura a cargar": el remito ya fue cargado y falta cargar la factura
+          // (facturaCargada !== true). En estas cards mostramos el desglose económico y
+          // NO permitimos editar (solo cargar). Si el remito trae los totales en 0 aún sin
+          // consolidar, calculamos el subtotal desde los artículos.
+          const esFacturaACargar = r.facturaCargada !== true;
+          const artSubtotal = items.reduce((a, it) => a + Number(it.total_unitario || 0), 0);
+          const subtotal = Number(r.subtotal) > 0 ? Number(r.subtotal) : artSubtotal;
+          const iva = Number(r.iva || 0);
+          const percepciones = Number(r.percepciones || 0);
+          const descuentos = Number(r.descuentos || 0);
+          const totalFactura = Number(r.total) > 0 ? Number(r.total) : subtotal - descuentos + percepciones + iva;
           return (
             <div
               key={r.id}
@@ -174,35 +210,46 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                   <HeadCell label="Nº REMITO" value={r.remitoNro || '—'} big />
                   <HeadCell label="Nº FACTURA" value={r.facturaNro || '—'} />
                   <HeadCell label="PROVEEDOR" value={provName(r)} />
-                  <HeadCell label="ESTADO" value={r.estado} />
+                  <HeadCell label="ESTADO" value={r.facturaCargada === true ? 'Factura cargada' : 'Remito Cargado'} />
                 </div>
                 <span style={{ fontSize: 13, color: 'var(--muted-2)', fontWeight: 600 }}>{fmtDate(r.fecha)}</span>
               </div>
               <div style={{ padding: '10px 22px 14px', flex: 1 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, fontWeight: 700, letterSpacing: '.4px', color: 'var(--muted-3)', padding: '10px 0 4px', borderBottom: '1px solid #eef1f6' }}>
+                <div
+                  onClick={() => toggleExpanded(r.id)}
+                  title={showItems ? 'Ocultar artículos' : 'Ver artículos'}
+                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, fontWeight: 700, letterSpacing: '.4px', color: 'var(--muted-3)', padding: '10px 0 4px', borderBottom: '1px solid #eef1f6', cursor: 'pointer', userSelect: 'none' }}
+                >
                   <span style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" style={{ transform: showItems ? 'rotate(90deg)' : 'none', transition: 'transform .15s ease', flex: 'none' }}>
+                      <path d="M9 6l6 6-6 6" />
+                    </svg>
                     {editing && (
                       <input
                         type="checkbox"
                         checked={allSel}
+                        onClick={(e) => e.stopPropagation()}
                         onChange={() => toggleAll(r)}
                         title="Marcar / desmarcar todos"
                         style={{ width: 15, height: 15, cursor: 'pointer', accentColor: '#2563eb' }}
                       />
                     )}
-                    ARTÍCULO
+                    ARTÍCULOS
+                    <span style={{ fontWeight: 700, color: 'var(--blue)', letterSpacing: 0 }}>{items.length}</span>
                     {editing && (
                       <span style={{ fontWeight: 600, color: 'var(--blue)', letterSpacing: 0 }}>
                         · {selCount}/{items.length} seleccionados
                       </span>
                     )}
                   </span>
-                  <span>CANT.</span>
+                  {showItems && <span>CANT.</span>}
                 </div>
-                <div
-                  className="ds-scroll"
-                  style={{ display: 'flex', flexDirection: 'column', maxHeight: MAX_ITEMS_HEIGHT, overflowY: 'auto' }}
-                >
+                <div style={{ display: 'grid', gridTemplateRows: showItems ? '1fr' : '0fr', transition: 'grid-template-rows .28s ease' }}>
+                  <div style={{ overflow: 'hidden', minHeight: 0 }}>
+                    <div
+                      className="ds-scroll"
+                      style={{ display: 'flex', flexDirection: 'column', maxHeight: MAX_ITEMS_HEIGHT, overflowY: 'auto' }}
+                    >
                   {items.length === 0 && (
                     <div style={{ padding: '11px 0', fontSize: 13, color: 'var(--muted-3)' }}>Sin artículos cargados.</div>
                   )}
@@ -246,49 +293,82 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                       </div>
                     );
                   })}
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div style={{ padding: '16px 22px', borderTop: '1px solid #eef1f6', display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
-                <button
-                  onClick={() => toggleEdit(r)}
-                  title="Seleccionar qué artículos cargar"
-                  style={{
-                    height: 44,
-                    padding: '0 26px',
-                    borderRadius: 9,
-                    border: '1px solid #cfd8e6',
-                    background: editing ? 'var(--blue-weak)' : '#fff',
-                    color: 'var(--blue)',
-                    fontWeight: 700,
-                    fontSize: 14,
-                    cursor: 'pointer',
-                  }}
-                >
-                  {editing ? 'Listo' : 'Editar'}
-                </button>
-                <button
-                  onClick={() => handleCargarStock(r)}
-                  disabled={busyId === r.id || (editing && selCount === 0)}
-                  style={{
-                    height: 44,
-                    padding: '0 26px',
-                    borderRadius: 9,
-                    border: 'none',
-                    background: busyId === r.id || (editing && selCount === 0) ? '#8a94a6' : 'var(--blue)',
-                    color: '#fff',
-                    fontWeight: 700,
-                    fontSize: 14,
-                    cursor: busyId === r.id || (editing && selCount === 0) ? 'not-allowed' : 'pointer',
-                  }}
-                >
-                  {busyId === r.id ? 'Cargando…' : editing ? `Cargar Stock (${selCount})` : 'Cargar Stock'}
-                </button>
+              <div style={{ padding: '14px 22px 16px', borderTop: '1px solid #eef1f6', display: 'flex', flexDirection: 'column', gap: 12, background: esFacturaACargar ? '#fbfcfe' : '#fff' }}>
+                {esFacturaACargar && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 8px', fontSize: 12.5, color: 'var(--muted-2)' }}>
+                    <EcoInline k="Subtotal" v={money(subtotal)} />
+                    {descuentos > 0 && <EcoInline k="Bonificaciones" v={'- ' + money(descuentos)} sep />}
+                    <EcoInline k="Percepciones" v={money(percepciones)} sep />
+                    <EcoInline k="IVA" v={money(iva)} sep />
+                  </div>
+                )}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                  {esFacturaACargar ? (
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 9 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '.5px', color: 'var(--muted-2)' }}>TOTAL</span>
+                      <span style={{ fontSize: 23, fontWeight: 800, color: 'var(--blue)', fontVariantNumeric: 'tabular-nums' }}>{money(totalFactura)}</span>
+                    </div>
+                  ) : (
+                    <span />
+                  )}
+                  <div style={{ display: 'flex', gap: 12 }}>
+                    {!esFacturaACargar && (
+                      <button
+                        onClick={() => toggleEdit(r)}
+                        title="Seleccionar qué artículos cargar"
+                        style={{
+                          height: 44,
+                          padding: '0 26px',
+                          borderRadius: 9,
+                          border: '1px solid #cfd8e6',
+                          background: editing ? 'var(--blue-weak)' : '#fff',
+                          color: 'var(--blue)',
+                          fontWeight: 700,
+                          fontSize: 14,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {editing ? 'Listo' : 'Editar'}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => esFacturaACargar ? handleCargarFactura(r) : handleCargarStock(r)}
+                      disabled={busyId === r.id || (editing && selCount === 0)}
+                      style={{
+                        height: 44,
+                        padding: '0 26px',
+                        borderRadius: 9,
+                        border: 'none',
+                        background: busyId === r.id || (editing && selCount === 0) ? '#8a94a6' : 'var(--blue)',
+                        color: '#fff',
+                        fontWeight: 700,
+                        fontSize: 14,
+                        cursor: busyId === r.id || (editing && selCount === 0) ? 'not-allowed' : 'pointer',
+                      }}
+                    >
+                      {busyId === r.id ? 'Cargando…' : editing ? `Cargar (${selCount})` : r.facturaCargada === true ? 'Cargar Remito' : 'Cargar Factura'}
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           );
         })}
       </div>
     </div>
+  );
+}
+
+function EcoInline({ k, v, sep }: { k: string; v: string; sep?: boolean }) {
+  return (
+    <span style={{ whiteSpace: 'nowrap' }}>
+      {sep && <span style={{ color: 'var(--muted-3)', marginRight: 8 }}>·</span>}
+      {k} <b style={{ fontWeight: 700, color: 'var(--ink-2)', fontVariantNumeric: 'tabular-nums' }}>{v}</b>
+    </span>
   );
 }
 
