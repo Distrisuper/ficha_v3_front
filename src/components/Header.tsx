@@ -1,30 +1,27 @@
+import type { ReactNode } from 'react';
+
 interface Props {
-  title: string;
-  subtitle: string;
   userLabel: string;
+  left?: ReactNode;
 }
 
-export function Header({ title, subtitle, userLabel }: Props) {
+export function Header({ userLabel, left }: Props) {
   return (
     <header
       style={{
-        height: 62,
+        minHeight: 62,
         flex: 'none',
         background: '#fff',
         borderBottom: '1px solid var(--border)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: '0 30px',
+        gap: 20,
+        padding: '10px 30px',
       }}
     >
-      <div>
-        <div style={{ fontWeight: 800, fontSize: 20, letterSpacing: '.2px', color: 'var(--navy)' }}>{title}</div>
-        <div style={{ fontSize: 11, letterSpacing: '.5px', color: 'var(--muted-3)', fontWeight: 700, marginTop: 1 }}>
-          {subtitle}
-        </div>
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 9, color: '#3a4352' }}>
+      <div style={{ flex: 1, minWidth: 0 }}>{left}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, color: '#3a4352', flex: 'none' }}>
         <span
           style={{
             width: 26,

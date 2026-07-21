@@ -2,17 +2,14 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useData } from '../context/DataContext';
 import { createFactura, subscribeFacturaEvents } from '../api/facturas';
 import { remitosApi } from '../api/remitos';
-import type { Articulo, JobEventDto, Remito } from '../types/api';
+import type { Articulo, JobEventDto, Remito, RemitoTipo } from '../types/api';
 import { money, parseMoneyInput } from '../utils/money';
 import { colorFor } from '../utils/colors';
-import { PENDIENTES_ESTADOS } from '../utils/estados';
-import { useSessionBoolean } from '../hooks/useSessionState';
 
-type TipoComp = 'factura' | 'remito';
 type Status = 'idle' | 'uploading' | 'processing' | 'done' | 'error';
 
 interface Props {
-  onGoToPendientes: (remitoId?: string) => void;
+  tipoComp: RemitoTipo;
 }
 
 const STORAGE_KEY = 'ficha_remitos_procesados';
@@ -28,10 +25,9 @@ function loadStored(key: string): Remito[] {
   }
 }
 
-export function NuevoPage({ onGoToPendientes }: Props) {
-  const { proveedores, sucursales, sucursalId, setSucursal, remitos, reloadRemitos } = useData();
+export function NuevoPage({ tipoComp }: Props) {
+  const { proveedores, sucursales, sucursalId, setSucursal, reloadRemitos } = useData();
 
-  const [tipoComp, setTipoComp] = useState<TipoComp>('factura');
   const [proveedorId, setProveedorId] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState<Status>(() => (loadStored(STORAGE_KEY).length > 0 ? 'done' : 'idle'));
@@ -47,7 +43,6 @@ export function NuevoPage({ onGoToPendientes }: Props) {
   const [approving, setApproving] = useState(false);
   const [discarding, setDiscarding] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
-  const [pendCollapsed, setPendCollapsed] = useSessionBoolean('ficha_pend_collapsed', false);
 
   const closeSseRef = useRef<(() => void) | null>(null);
   useEffect(() => () => closeSseRef.current?.(), []);
@@ -260,42 +255,13 @@ export function NuevoPage({ onGoToPendientes }: Props) {
     }
   }
 
-  const pendientesPreview = useMemo(
-    () => remitos.filter((r) => PENDIENTES_ESTADOS.has(r.estado)).slice(0, 8),
-    [remitos],
-  );
-
-  const tipoBtnStyle = (active: boolean): CSSProperties => ({
-    padding: '7px 18px',
-    border: 'none',
-    borderRadius: 7,
-    fontSize: '13.5px',
-    fontWeight: 600,
-    cursor: 'pointer',
-    background: active ? 'var(--blue)' : 'transparent',
-    color: active ? '#fff' : 'var(--muted)',
-    boxShadow: active ? '0 1px 2px rgba(18,50,122,.18)' : 'none',
-  });
-
   return (
-    <div style={{ display: 'flex', gap: 22, alignItems: 'flex-start' }}>
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 18 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--muted)' }}>Tipo de comprobante</label>
-          <div style={{ display: 'inline-flex', background: '#eef1f6', border: '1px solid var(--border)', borderRadius: 9, padding: 3 }}>
-            <button onClick={() => setTipoComp('factura')} style={tipoBtnStyle(tipoComp === 'factura')}>
-              Factura
-            </button>
-            <button onClick={() => setTipoComp('remito')} style={tipoBtnStyle(tipoComp === 'remito')}>
-              Remito
-            </button>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 1100 }}>
+        {tipoComp === 'remito' && (
+          <div style={{ fontSize: 12.5, color: 'var(--muted-3)', background: '#f4f8ff', border: '1px solid var(--border)', borderRadius: 8, padding: '9px 13px' }}>
+            La API sólo tiene un endpoint de carga (factura); el PDF se procesa igual, sin desglose de IVA abajo.
           </div>
-          {tipoComp === 'remito' && (
-            <span style={{ fontSize: 12, color: 'var(--muted-3)' }}>
-              La API sólo tiene un endpoint de carga (factura); el PDF se procesa igual, sin desglose de IVA abajo.
-            </span>
-          )}
-        </div>
+        )}
 
         <section style={cardStyle}>
           <div style={{ display: 'flex', gap: 22, alignItems: 'flex-end', flexWrap: 'wrap' }}>
@@ -626,165 +592,6 @@ export function NuevoPage({ onGoToPendientes }: Props) {
             </button>
           </div>
         </section>
-      </div>
-
-      <aside
-        style={{
-          width: pendCollapsed ? 56 : 326,
-          flex: 'none',
-          background: '#fff',
-          border: '1px solid var(--border)',
-          borderRadius: 12,
-          overflow: 'hidden',
-          alignSelf: 'stretch',
-          display: 'flex',
-          flexDirection: 'column',
-          transition: 'width .18s ease',
-        }}
-      >
-        {pendCollapsed ? (
-          <button
-            onClick={() => setPendCollapsed(false)}
-            title="Expandir remitos pendientes"
-            style={{
-              flex: 1,
-              width: '100%',
-              border: 'none',
-              background: 'transparent',
-              cursor: 'pointer',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              gap: 14,
-              padding: '16px 0',
-            }}
-          >
-            <span
-              style={{
-                width: 26,
-                height: 26,
-                flex: 'none',
-                borderRadius: 6,
-                border: '1px solid #e0e4ec',
-                background: '#fff',
-                color: 'var(--muted-2)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-                <path d="M15 6l-6 6 6 6" />
-              </svg>
-            </span>
-            <span style={{ color: 'var(--blue)', display: 'flex' }}>
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 16V8l-9-5-9 5v8l9 5 9-5Z" />
-                <path d="M3.3 7 12 12l8.7-5" />
-                <path d="M12 22V12" />
-              </svg>
-            </span>
-            <span
-              style={{
-                background: 'var(--blue)',
-                color: '#fff',
-                fontSize: 12,
-                fontWeight: 800,
-                borderRadius: 999,
-                minWidth: 22,
-                height: 22,
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '0 6px',
-              }}
-            >
-              {pendientesPreview.length}
-            </span>
-            <span
-              style={{
-                writingMode: 'vertical-rl',
-                transform: 'rotate(180deg)',
-                fontSize: '12.5px',
-                fontWeight: 800,
-                letterSpacing: '.5px',
-                color: 'var(--navy)',
-                marginTop: 6,
-              }}
-            >
-              Remitos Pendientes
-            </span>
-          </button>
-        ) : (
-          <>
-            <div style={{ padding: '16px 18px 13px', borderBottom: '1px solid #eef1f6', display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--navy)' }}>Remitos Pendientes</div>
-                <div style={{ fontSize: 12, color: 'var(--muted-3)', marginTop: 2 }}>Tocá una tarjeta para gestionar</div>
-              </div>
-              <span style={{ background: 'var(--blue-weak)', color: 'var(--blue)', fontSize: 13, fontWeight: 800, borderRadius: 999, minWidth: 26, height: 26, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0 8px' }}>
-                {pendientesPreview.length}
-              </span>
-              <button
-                onClick={() => setPendCollapsed(true)}
-                title="Contraer"
-                style={{
-                  width: 26,
-                  height: 26,
-                  flex: 'none',
-                  borderRadius: 6,
-                  border: '1px solid #e0e4ec',
-                  background: '#fff',
-                  color: 'var(--muted-2)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  cursor: 'pointer',
-                  padding: 0,
-                }}
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M9 6l6 6-6 6" />
-                </svg>
-              </button>
-            </div>
-            <div className="ds-scroll" style={{ flex: 1, overflow: 'auto', padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {pendientesPreview.length === 0 && (
-                <div style={{ fontSize: 13, color: 'var(--muted-3)', textAlign: 'center', padding: '20px 0' }}>Sin remitos pendientes.</div>
-              )}
-              {pendientesPreview.map((r) => (
-                <button
-                  key={r.id}
-                  onClick={() => onGoToPendientes(r.id)}
-                  style={{
-                    textAlign: 'left',
-                    background: '#f9fbfe',
-                    border: '1px solid #e3e9f3',
-                    borderLeft: '4px solid #2563eb',
-                    borderRadius: 10,
-                    padding: '13px 14px',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 8,
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.4px', color: 'var(--muted-2)' }}>REMITO</span>
-                    <span style={{ fontSize: 11, color: '#b6bdc9' }}>{r.fecha ? new Date(r.fecha).toLocaleDateString('es-AR') : ''}</span>
-                  </div>
-                  <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--navy)' }}>{r.remitoNro || '(sin número)'}</div>
-                  <div style={{ fontSize: 13, color: 'var(--muted)', fontWeight: 600 }}>{r.proveedor?.nombre ?? '—'}</div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 }}>
-                    <span style={{ fontSize: 12, color: 'var(--muted-2)' }}>{(r.articulos?.length ?? 0)} artículos</span>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--blue)' }}>Ver →</span>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </>
-        )}
-      </aside>
     </div>
   );
 }
