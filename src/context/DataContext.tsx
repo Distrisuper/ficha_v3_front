@@ -1,34 +1,11 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { proveedoresApi } from '../api/proveedores';
 import { sucursalesApi } from '../api/sucursales';
 import { listRemitos } from '../api/remitos';
 import type { Proveedor, Remito, Sucursal, UUID } from '../types/api';
 import { EMPTY_FILTERS, type RemitoFilters } from '../utils/filtros';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-
-interface DataContextValue {
-  proveedores: Proveedor[];
-  sucursales: Sucursal[];
-  reloadCatalogos: () => Promise<void>;
-
-  sucursalId: string;
-  sucursalNombre: string;
-  setSucursal: (id: UUID, nombre: string) => void;
-  clearSucursal: () => void;
-
-  // Filtros compartidos por Pendientes/Historial. El rango de fechas además viaja
-  // en la request de remitos (ver reloadRemitos), por eso el estado vive acá.
-  filters: RemitoFilters;
-  setFilters: (f: RemitoFilters) => void;
-
-  remitos: Remito[];
-  // remitosHistory: Remito[];
-  remitosLoading: boolean;
-  remitosError: string | null;
-  reloadRemitos: () => Promise<void>;
-}
-
-const DataContext = createContext<DataContextValue | null>(null);
+import { DataContext, type DataContextValue } from './data-context';
 
 export function DataProvider({ children }: { children: ReactNode }) {
   const [proveedores, setProveedores] = useState<Proveedor[]>([]);
@@ -128,10 +105,4 @@ export function DataProvider({ children }: { children: ReactNode }) {
   );
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
-}
-
-export function useData(): DataContextValue {
-  const ctx = useContext(DataContext);
-  if (!ctx) throw new Error('useData debe usarse dentro de DataProvider');
-  return ctx;
 }

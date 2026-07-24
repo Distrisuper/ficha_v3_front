@@ -1,6 +1,6 @@
 import { useState, type CSSProperties } from 'react';
-import { useAuth } from '../context/AuthContext';
-import { useData } from '../context/DataContext';
+import { useAuth } from '../context/auth-context';
+import { useData } from '../context/data-context';
 import { proveedoresApi } from '../api/proveedores';
 import { sucursalesApi } from '../api/sucursales';
 import type { Proveedor, Sucursal } from '../types/api';

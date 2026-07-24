@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { useData } from '../context/DataContext';
+import { useData } from '../context/data-context';
 import { createFactura, subscribeFacturaEvents } from '../api/facturas';
 import { remitosApi } from '../api/remitos';
 import type { Articulo, JobEventDto, Remito, RemitoTipo } from '../types/api';

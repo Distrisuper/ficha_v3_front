@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import { useData } from '../context/DataContext';
+import { useData } from '../context/data-context';
 import { EMPTY_FILTERS, hayFiltrosActivos, type RemitoFilters, type TipoFiltro } from '../utils/filtros';
 
 interface Props {

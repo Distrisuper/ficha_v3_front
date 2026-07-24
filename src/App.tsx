@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
-import { AuthProvider, useAuth } from './context/AuthContext';
-import { DataProvider, useData } from './context/DataContext';
+import { AuthProvider } from './context/AuthContext';
+import { useAuth } from './context/auth-context';
+import { DataProvider } from './context/DataContext';
+import { useData } from './context/data-context';
 import { Login } from './components/Login';
 import { Sidebar, type TabKey } from './components/Sidebar';
 import { Header } from './components/Header';
