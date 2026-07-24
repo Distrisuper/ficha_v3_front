@@ -21,7 +21,7 @@ export function FiltersBar({ value, onChange }: Props) {
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      {/* <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={labelStyle}>Tipo</span>
         <div style={segWrap}>
           {TIPOS.map((t) => (
@@ -30,7 +30,7 @@ export function FiltersBar({ value, onChange }: Props) {
             </button>
           ))}
         </div>
-      </div>
+      </div> */}
 
       <select
         value={sucursalId}

@@ -180,7 +180,7 @@ export function Sidebar({ tab, onChange, collapsed, onToggleCollapsed, pendCount
                   {item.key === 'pendientes' && pendCount > 0 && (
                     <span
                       style={{
-                        background: 'var(--blue)',
+                        background: 'var(--warn)',
                         color: '#fff',
                         fontSize: '9.5px',
                         fontWeight: 700,

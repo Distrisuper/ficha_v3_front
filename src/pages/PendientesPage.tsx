@@ -199,6 +199,7 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                   padding: '18px 22px',
                   background: 'linear-gradient(180deg,#f4f8ff,#ffffff)',
                   borderBottom: '1px solid #eef1f6',
+                  borderLeft: '2px solid #D8AA12',
                   display: 'flex',
                   justifyContent: 'space-between',
                   alignItems: 'center',

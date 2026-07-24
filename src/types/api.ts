@@ -30,6 +30,7 @@ export interface Articulo {
   nombre: string;
   codigo: string;
   cantidad: number | string; // el backend persiste esta columna como char(36): puede llegar como string
+  stockCargado: boolean; // true = ítem ya cargado a stock (define "items procesados" en el historial)
   precio_unitario: number;
   total_unitario: number;
   remitoId: UUID;

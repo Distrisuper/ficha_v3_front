@@ -13,17 +13,17 @@ const OPCIONES: { key: RemitoTipo; label: string }[] = [
 
 // Control de "tipo de comprobante" que vive en la barra superior de la pantalla Nuevo,
 // con el mismo look de filtro segmentado que FiltersBar. Selecciona qué se está cargando.
-export function TipoCompBar({ value, onChange }: Props) {
+export function TipoCompBar() {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-      <span style={labelStyle}>Tipo de comprobante</span>
+      {/* <span style={labelStyle}>Tipo de comprobante</span>
       <div style={segWrap}>
         {OPCIONES.map((o) => (
           <button key={o.key} onClick={() => onChange(o.key)} style={segBtn(value === o.key)}>
             {o.label}
           </button>
         ))}
-      </div>
+      </div> */}
     </div>
   );
 }
