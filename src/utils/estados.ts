@@ -6,10 +6,11 @@ import type { RemitoEstado } from '../types/api';
 // justamente los "pendientes de cargar a stock". Por eso 'cargado' entra en este grupo.
 export const PENDIENTES_ESTADOS = new Set<RemitoEstado>(['cargado', 'pendiente', 'procesado']);
 
-// Estados finales para el historial. Nota: hoy el backend no expone un endpoint que
-// liste estos estados (approve deja 'cargado', no 'aprobado'), así que el historial
-// puede venir vacío hasta que la API lo soporte.
-export const HISTORIAL_ESTADOS = new Set<RemitoEstado>(['aprobado', 'anulado', 'error']);
+// Estados terminales del historial. El back (GET /remitos/history) ya filtra por
+// estos estados server-side; este set queda como guarda defensiva client-side.
+//   aprobado → stock cargado OK (submitMercaderia)
+//   anulado  → descartado (discardRemito, soft-delete)
+export const HISTORIAL_ESTADOS = new Set<RemitoEstado>(['aprobado', 'anulado']);
 
 export const esPendiente = (estado: RemitoEstado): boolean => PENDIENTES_ESTADOS.has(estado);
 export const esHistorial = (estado: RemitoEstado): boolean => HISTORIAL_ESTADOS.has(estado);

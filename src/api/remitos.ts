@@ -35,8 +35,17 @@ export async function listRemitos(sucursalId?: UUID, params?: ListRemitosParams)
   });
 }
 
+// Historial (estados terminales: aprobado / anulado). El back filtra por estado y
+// scopea por company_id; sucursalId es opcional (sin él trae todas las sucursales).
+export async function listHistorial(sucursalId?: UUID): Promise<Remito[]> {
+  const qs = sucursalId ? `?sucursalId=${encodeURIComponent(sucursalId)}` : '';
+  const data = await api.get<Remito[]>(`/remitos/history${qs}`);
+  return Array.isArray(data) ? data : [];
+}
+
 export const remitosApi = {
   list: listRemitos,
+  history: listHistorial,
   getByJobId: (jobId: string) => api.get<Remito[]>(`/remitos/by-job/${jobId}`),
   get: (id: UUID) => api.get<Remito | null>(`/remitos/${id}`),
   approve: (id: UUID) => api.patch<Remito>(`/remitos/${id}/approve`),

@@ -56,7 +56,7 @@ export interface Remito {
   total: number;
   companyId: number;
   jobId: string | null;
-  approvedAt: string;
+  approvedAt: string | null; // se llena recién al aprobar (submitMercaderia); null antes
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
