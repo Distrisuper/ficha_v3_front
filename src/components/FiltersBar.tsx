@@ -1,17 +1,11 @@
 import type { CSSProperties } from 'react';
 import { useData } from '../context/data-context';
-import { EMPTY_FILTERS, hayFiltrosActivos, type RemitoFilters, type TipoFiltro } from '../utils/filtros';
+import { EMPTY_FILTERS, hayFiltrosActivos, type RemitoFilters } from '../utils/filtros';
 
 interface Props {
   value: RemitoFilters;
   onChange: (f: RemitoFilters) => void;
 }
-
-const TIPOS: { key: TipoFiltro; label: string }[] = [
-  { key: 'todos', label: 'Todos' },
-  { key: 'remito', label: 'Remito' },
-  { key: 'factura', label: 'Factura' },
-];
 
 export function FiltersBar({ value, onChange }: Props) {
   // La sucursal NO es parte de `value`: es la sucursal global persistida en localStorage
@@ -21,17 +15,6 @@ export function FiltersBar({ value, onChange }: Props) {
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-      {/* <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={labelStyle}>Tipo</span>
-        <div style={segWrap}>
-          {TIPOS.map((t) => (
-            <button key={t.key} onClick={() => onChange({ ...value, tipo: t.key })} style={segBtn(value.tipo === t.key)}>
-              {t.label}
-            </button>
-          ))}
-        </div>
-      </div> */}
-
       <select
         value={sucursalId}
         onChange={(e) => {
@@ -94,26 +77,6 @@ export function FiltersBar({ value, onChange }: Props) {
 }
 
 const labelStyle: CSSProperties = { fontSize: 12.5, fontWeight: 700, color: 'var(--muted-2)' };
-
-const segWrap: CSSProperties = {
-  display: 'inline-flex',
-  background: '#eef1f6',
-  border: '1px solid var(--border)',
-  borderRadius: 8,
-  padding: 3,
-};
-
-const segBtn = (active: boolean): CSSProperties => ({
-  padding: '5px 13px',
-  border: 'none',
-  borderRadius: 6,
-  fontSize: 13,
-  fontWeight: 600,
-  cursor: 'pointer',
-  background: active ? 'var(--blue)' : 'transparent',
-  color: active ? '#fff' : 'var(--muted)',
-  boxShadow: active ? '0 1px 2px rgba(18,50,122,.18)' : 'none',
-});
 
 const selectStyle: CSSProperties = {
   height: 36,

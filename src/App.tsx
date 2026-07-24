@@ -21,14 +21,14 @@ function Shell() {
   const { remitos, filters, setFilters } = useData();
   const [tab, setTab] = useState<TabKey>('nuevo');
   const [collapsed, setCollapsed] = useSessionBoolean('ficha_sidebar_collapsed', false);
-  const [tipoComp, setTipoComp] = useState<RemitoTipo>('factura');
+  const [tipoComp] = useState<RemitoTipo>('factura');
 
   const pendCount = useMemo(() => remitos.filter((r) => PENDIENTES_ESTADOS.has(r.estado)).length, [remitos]);
   const userLabel = auth?.nombre ?? auth?.rol ?? (auth?.id ? auth.id.slice(0, 8) : 'Usuario');
 
   const headerLeft =
     tab === 'nuevo' ? (
-      <TipoCompBar value={tipoComp} onChange={setTipoComp} />
+      <TipoCompBar />
     ) : tab === 'pendientes' || tab === 'historial' ? (
       <FiltersBar value={filters} onChange={setFilters} />
     ) : null;
