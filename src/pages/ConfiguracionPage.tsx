@@ -3,13 +3,22 @@ import { useAuth } from '../context/auth-context';
 import { useData } from '../context/data-context';
 import { proveedoresApi } from '../api/proveedores';
 import { sucursalesApi } from '../api/sucursales';
+import { permsFor } from '../utils/roles';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import type { Proveedor, Sucursal } from '../types/api';
 
 type ListKey = 'proveedores' | 'sucursales';
 
+interface PendingDelete {
+  listKey: ListKey;
+  id: string;
+  name: string;
+}
+
 export function ConfiguracionPage() {
   const { auth } = useAuth();
   const { proveedores, sucursales, reloadCatalogos, clearSucursal, sucursalId } = useData();
+  const perms = permsFor(auth);
 
   const [provDraft, setProvDraft] = useState('');
   const [sucDraft, setSucDraft] = useState('');
@@ -17,6 +26,7 @@ export function ConfiguracionPage() {
   const [editValue, setEditValue] = useState('');
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
 
   async function add(listKey: ListKey, value: string) {
     const val = value.trim();
@@ -57,7 +67,9 @@ export function ConfiguracionPage() {
     }
   }
 
-  async function del(listKey: ListKey, id: string) {
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+    const { listKey, id } = pendingDelete;
     setBusy(true);
     setErrorMsg(null);
     try {
@@ -67,6 +79,7 @@ export function ConfiguracionPage() {
         if (id === sucursalId) clearSucursal();
       }
       await reloadCatalogos();
+      setPendingDelete(null);
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : 'No se pudo eliminar');
     } finally {
@@ -125,10 +138,13 @@ export function ConfiguracionPage() {
             setEditKey(null);
             setEditValue('');
           }}
-          onDelete={(id) => del('proveedores', id)}
+          onRequestDelete={(id, name) => setPendingDelete({ listKey: 'proveedores', id, name })}
           listKey="proveedores"
           busy={busy}
           placeholder="Nuevo proveedor…"
+          canAdd={perms.proveedorAdd}
+          canEdit={perms.proveedorEdit}
+          canDelete={perms.proveedorDelete}
         />
         <CrudSection
           title="Sucursales"
@@ -148,12 +164,30 @@ export function ConfiguracionPage() {
             setEditKey(null);
             setEditValue('');
           }}
-          onDelete={(id) => del('sucursales', id)}
+          onRequestDelete={(id, name) => setPendingDelete({ listKey: 'sucursales', id, name })}
           listKey="sucursales"
           busy={busy}
           placeholder="Nueva sucursal…"
+          canAdd={perms.sucursalAdd}
+          canEdit={perms.sucursalEdit}
+          canDelete={perms.sucursalDelete}
         />
       </div>
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        danger
+        busy={busy}
+        title={`Eliminar ${pendingDelete?.listKey === 'sucursales' ? 'sucursal' : 'proveedor'}`}
+        message={
+          <>
+            ¿Seguro que querés eliminar <b>{pendingDelete?.name}</b>? Esta acción no se puede deshacer.
+          </>
+        }
+        confirmLabel="Eliminar"
+        onConfirm={confirmDelete}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   );
 }
@@ -170,10 +204,13 @@ interface CrudSectionProps {
   onStartEdit: (id: string, name: string) => void;
   onSaveEdit: () => void;
   onCancelEdit: () => void;
-  onDelete: (id: string) => void;
+  onRequestDelete: (id: string, name: string) => void;
   listKey: ListKey;
   busy: boolean;
   placeholder: string;
+  canAdd: boolean;
+  canEdit: boolean;
+  canDelete: boolean;
 }
 
 function CrudSection({
@@ -188,11 +225,16 @@ function CrudSection({
   onStartEdit,
   onSaveEdit,
   onCancelEdit,
-  onDelete,
+  onRequestDelete,
   listKey,
   busy,
   placeholder,
+  canAdd,
+  canEdit,
+  canDelete,
 }: CrudSectionProps) {
+  const canSubmitAdd = !busy && draft.trim().length > 0;
+  const canSubmitEdit = !busy && editValue.trim().length > 0;
   return (
     <section style={{ flex: 1, minWidth: 400, background: '#fff', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
       <div style={{ padding: '16px 20px', borderBottom: '1px solid #eef1f6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -216,7 +258,11 @@ function CrudSection({
                     onChange={(e) => onEditValueChange(e.target.value)}
                     style={{ flex: 1, height: 38, border: '1px solid var(--blue)', borderRadius: 8, padding: '0 12px', fontSize: 14, color: 'var(--ink)', outline: 'none' }}
                   />
-                  <button onClick={onSaveEdit} disabled={busy} style={saveBtn}>
+                  <button
+                    onClick={onSaveEdit}
+                    disabled={!canSubmitEdit}
+                    style={{ ...saveBtn, background: canSubmitEdit ? 'var(--ok)' : '#c3cad6', cursor: canSubmitEdit ? 'pointer' : 'not-allowed' }}
+                  >
                     Guardar
                   </button>
                   <button onClick={onCancelEdit} style={cancelBtn}>
@@ -226,37 +272,53 @@ function CrudSection({
               ) : (
                 <>
                   <span style={{ flex: 1, fontSize: '14.5px', color: 'var(--ink-2)', fontWeight: 500 }}>{it.nombre}</span>
-                  <button onClick={() => onStartEdit(it.id, it.nombre)} title="Editar" style={iconBtn}>
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M12 20h9" />
-                      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
-                    </svg>
-                  </button>
-                  <button onClick={() => onDelete(it.id)} title="Eliminar" style={{ ...iconBtn, border: '1px solid #f0d3d3', color: 'var(--err)' }}>
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M3 6h18" />
-                      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                    </svg>
-                  </button>
+                  {canEdit && (
+                    <button onClick={() => onStartEdit(it.id, it.nombre)} title="Editar" style={iconBtn}>
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 20h9" />
+                        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                      </svg>
+                    </button>
+                  )}
+                  {canDelete && (
+                    <button onClick={() => onRequestDelete(it.id, it.nombre)} title="Eliminar" style={{ ...iconBtn, border: '1px solid #f0d3d3', color: 'var(--err)' }}>
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M3 6h18" />
+                        <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                      </svg>
+                    </button>
+                  )}
                 </>
               )}
             </div>
           );
         })}
       </div>
-      <div style={{ display: 'flex', gap: 10, padding: '16px 20px', background: '#f8fafc', borderTop: '1px solid #eef1f6' }}>
-        <input
-          value={draft}
-          onChange={(e) => onDraftChange(e.target.value)}
-          placeholder={placeholder}
-          onKeyDown={(e) => e.key === 'Enter' && onAdd()}
-          style={{ flex: 1, height: 40, border: '1px solid var(--border-2)', borderRadius: 8, padding: '0 13px', fontSize: 14, color: 'var(--ink)', outline: 'none' }}
-        />
-        <button onClick={onAdd} disabled={busy} style={addBtn}>
-          Agregar
-        </button>
-      </div>
+      {canAdd && (
+        <div style={{ display: 'flex', gap: 10, padding: '16px 20px', background: '#f8fafc', borderTop: '1px solid #eef1f6' }}>
+          <input
+            value={draft}
+            onChange={(e) => onDraftChange(e.target.value)}
+            placeholder={placeholder}
+            onKeyDown={(e) => e.key === 'Enter' && canSubmitAdd && onAdd()}
+            style={{ flex: 1, height: 40, border: '1px solid var(--border-2)', borderRadius: 8, padding: '0 13px', fontSize: 14, color: 'var(--ink)', outline: 'none' }}
+          />
+          <button
+            onClick={onAdd}
+            disabled={!canSubmitAdd}
+            title={draft.trim() ? undefined : 'Ingresá un nombre para habilitar'}
+            style={{
+              ...addBtn,
+              background: canSubmitAdd ? 'var(--ok)' : '#c3cad6',
+              cursor: canSubmitAdd ? 'pointer' : 'not-allowed',
+              opacity: canSubmitAdd ? 1 : 0.9,
+            }}
+          >
+            Agregar
+          </button>
+        </div>
+      )}
     </section>
   );
 }
@@ -285,6 +347,6 @@ const iconBtn: CSSProperties = {
   justifyContent: 'center',
   cursor: 'pointer',
 };
-const saveBtn: CSSProperties = { height: 38, padding: '0 14px', borderRadius: 8, border: 'none', background: 'var(--blue)', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' };
+const saveBtn: CSSProperties = { height: 38, padding: '0 14px', borderRadius: 8, border: 'none', background: 'var(--ok)', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' };
 const cancelBtn: CSSProperties = { height: 38, padding: '0 12px', borderRadius: 8, border: '1px solid var(--border-2)', background: '#fff', color: 'var(--muted)', fontWeight: 600, fontSize: 13, cursor: 'pointer' };
-const addBtn: CSSProperties = { height: 40, padding: '0 18px', borderRadius: 8, border: 'none', background: 'var(--blue)', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' };
+const addBtn: CSSProperties = { height: 40, padding: '0 18px', borderRadius: 8, border: 'none', background: 'var(--ok)', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' };

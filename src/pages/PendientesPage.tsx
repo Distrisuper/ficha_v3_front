@@ -15,7 +15,7 @@ interface Props {
 }
 
 export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
-  const { remitos, remitosLoading, remitosError, reloadRemitos, proveedores } = useData();
+  const { remitos, remitosLoading, remitosError, reloadRemitos, proveedores, sucursales, sucursalId } = useData();
   const pendientes = useMemo(
     () => applyFilters(remitos.filter((r) => PENDIENTES_ESTADOS.has(r.estado)), filters),
     [remitos, filters],
@@ -58,6 +58,13 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
 
   const provName = (r: Remito) =>
     proveedores.find((p) => p.id === r.proveedorId)?.nombre ?? r.proveedor?.nombre ?? r.proveedorId ?? '—';
+
+  const sucName = (r: Remito) => {
+    const sid = r.sucursalId ?? r.sucursal?.id;
+    return sucursales.find((s) => s.id === sid)?.nombre ?? r.sucursal?.nombre ?? '—';
+  };
+  // Solo mostramos la sucursal en cada card cuando el filtro global es "Todas".
+  const mostrarSucursal = sucursalId === '';
 
   const allItemIds = (r: Remito) => (r.articulos ?? []).map((a) => a.id);
   // Selección efectiva: la guardada, o TODOS por defecto (todo marcado).
@@ -199,7 +206,7 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                   padding: '18px 22px',
                   background: 'linear-gradient(180deg,#f4f8ff,#ffffff)',
                   borderBottom: '1px solid #eef1f6',
-                  borderLeft: '2px solid #D8AA12',
+                  borderLeft: '3px solid #D8AA12',
                   display: 'flex',
                   justifyContent: 'space-between',
                   alignItems: 'center',
@@ -211,6 +218,7 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                   <HeadCell label="Nº REMITO" value={r.remitoNro || '—'} big />
                   <HeadCell label="Nº FACTURA" value={r.facturaNro || '—'} />
                   <HeadCell label="PROVEEDOR" value={provName(r)} />
+                  {mostrarSucursal && <HeadCell label="SUCURSAL" value={sucName(r)} />}
                   <HeadCell label="ESTADO" value={r.facturaCargada === true ? 'Factura cargada' : 'Remito Cargado'} />
                 </div>
                 <span style={{ fontSize: 13, color: 'var(--muted-2)', fontWeight: 600 }}>{fmtDate(r.fecha)}</span>
@@ -333,7 +341,7 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                           cursor: 'pointer',
                         }}
                       >
-                        {editing ? 'Listo' : 'Editar'}
+                        {editing ? 'Listo' : 'Seleccionar artículos'}
                       </button>
                     )}
                     <button
@@ -344,7 +352,7 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                         padding: '0 26px',
                         borderRadius: 9,
                         border: 'none',
-                        background: busyId === r.id || (editing && selCount === 0) ? '#8a94a6' : 'var(--blue)',
+                        background: busyId === r.id || (editing && selCount === 0) ? '#8a94a6' : 'var(--ok)',
                         color: '#fff',
                         fontWeight: 700,
                         fontSize: 14,

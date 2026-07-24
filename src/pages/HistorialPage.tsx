@@ -21,7 +21,7 @@ const totalItems = (r: Remito) =>
   r.articulos?.reduce((acc, a) => acc + (Number(a.cantidad) || 0), 0) ?? 0;
 
 export function HistorialPage({ filters }: Props) {
-  const { proveedores, sucursalId } = useData();
+  const { proveedores, sucursales, sucursalId } = useData();
 
   // El historial NO comparte lista con Pendientes: se pide on-demand a
   // GET /remitos/history (que ya filtra los estados server-side).
@@ -34,6 +34,14 @@ export function HistorialPage({ filters }: Props) {
     (r: Remito) =>
       proveedores.find((p) => p.id === r.proveedorId)?.nombre ?? r.proveedor?.nombre ?? r.proveedorId ?? '—',
     [proveedores],
+  );
+
+  const sucName = useCallback(
+    (r: Remito) => {
+      const sid = r.sucursalId ?? r.sucursal?.id;
+      return sucursales.find((s) => s.id === sid)?.nombre ?? r.sucursal?.nombre ?? '—';
+    },
+    [sucursales],
   );
 
   // Solo depende de la sucursal (único filtro que viaja al endpoint). Los demás
@@ -78,10 +86,11 @@ export function HistorialPage({ filters }: Props) {
 
   const exportCsv = useCallback(() => {
     const headers = [
-      'Proveedor', 'Fecha', 'Remito', 'Factura', 'Estado', 'Artículos', 'Items',
-      'Subtotal', 'IVA', 'Percepciones', 'Total', 'Fecha procesado', 'Fecha carga remito',
+      'Sucursal', 'Proveedor', 'Fecha', 'Remito', 'Factura', 'Estado', 'Artículos', 'Items',
+      'Total', 'Fecha procesado', 'Fecha carga remito',
     ];
     const rows = historial.map((h) => [
+      sucName(h),
       provName(h),
       fmtDate(h.fecha),
       h.remitoNro ?? '',
@@ -89,15 +98,12 @@ export function HistorialPage({ filters }: Props) {
       historialEstadoView(h.estado).label,
       totalArts(h),
       totalItems(h),
-      h.subtotal,
-      h.iva,
-      h.percepciones,
       h.total,
       fmtDate(h.createdAt),
       fmtDate(h.approvedAt),
     ]);
     downloadCsv(`historial_${new Date().toISOString().slice(0, 10)}.csv`, headers, rows);
-  }, [historial, provName]);
+  }, [historial, provName, sucName]);
 
   const exportDisabled = loading || historial.length === 0;
 
@@ -131,9 +137,10 @@ export function HistorialPage({ filters }: Props) {
       )}
 
       <div className="ds-scroll" style={{ overflow: 'auto', maxHeight: 'calc(100vh - 280px)' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 1400 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 1200 }}>
           <thead>
             <tr style={{ textAlign: 'left' }}>
+              <Th>SUCURSAL</Th>
               <Th>PROVEEDOR</Th>
               <Th>FECHA</Th>
               <Th>REMITO</Th>
@@ -141,9 +148,6 @@ export function HistorialPage({ filters }: Props) {
               <Th>ESTADO</Th>
               <Th>ARTÍCULOS</Th>
               <Th>ITEMS</Th>
-              <Th>SUBTOTAL</Th>
-              <Th>IVA</Th>
-              <Th>PERCEP.</Th>
               <Th>TOTAL</Th>
               <Th>FECHA PROCESADO</Th>
               <Th>FECHA CARGA REMITO</Th>
@@ -152,14 +156,14 @@ export function HistorialPage({ filters }: Props) {
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={13} style={{ padding: 24, textAlign: 'center', color: 'var(--muted-3)' }}>
+                <td colSpan={11} style={{ padding: 24, textAlign: 'center', color: 'var(--muted-3)' }}>
                   Cargando registros…
                 </td>
               </tr>
             )}
             {!loading && historial.length === 0 && (
               <tr>
-                <td colSpan={13} style={{ padding: 24, textAlign: 'center', color: 'var(--muted-3)' }}>
+                <td colSpan={11} style={{ padding: 24, textAlign: 'center', color: 'var(--muted-3)' }}>
                   Todavía no hay registros procesados.
                 </td>
               </tr>
@@ -168,6 +172,7 @@ export function HistorialPage({ filters }: Props) {
               const ev = historialEstadoView(h.estado);
               return (
                 <tr key={h.id} style={{ borderTop: '1px solid #f2f4f8', background: i % 2 ? '#fbfcfe' : '#ffffff' }}>
+                  <td style={{ ...td, fontWeight: 600 }}>{sucName(h)}</td>
                   <td style={td}>{provName(h)}</td>
                   <td style={td}>{fmtDate(h.fecha)}</td>
                   <td style={{ ...td, fontVariantNumeric: 'tabular-nums' }}>{h.remitoNro || '—'}</td>
@@ -175,9 +180,6 @@ export function HistorialPage({ filters }: Props) {
                   <td style={{ ...td, color: ev.color, fontWeight: 700 }}>{ev.label}</td>
                   <td style={{ ...td, color: 'var(--blue)', fontWeight: 600 }}>{totalArts(h)}</td>
                   <td style={{ ...td, color: 'var(--blue)', fontWeight: 600 }}>{totalItems(h)}</td>
-                  <td style={{ ...td, fontVariantNumeric: 'tabular-nums' }}>{money(h.subtotal)}</td>
-                  <td style={{ ...td, fontVariantNumeric: 'tabular-nums' }}>{money(h.iva)}</td>
-                  <td style={{ ...td, fontVariantNumeric: 'tabular-nums' }}>{money(h.percepciones)}</td>
                   <td style={{ ...td, fontVariantNumeric: 'tabular-nums' }}>{money(h.total)}</td>
                   <td style={td}>{fmtDate(h.createdAt)}</td>
                   <td style={td}>{fmtDate(h.approvedAt)}</td>

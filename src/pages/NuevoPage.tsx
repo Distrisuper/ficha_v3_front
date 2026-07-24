@@ -109,10 +109,23 @@ export function NuevoPage({ tipoComp }: Props) {
   // Catálogos (proveedores/sucursales) y remitos ya se cargan en el DataContext al
   // arrancar, así que esta página solo los consume desde el context.
 
-  const canProcess = !!file && !!sucursalId && !!proveedorId && status !== 'uploading' && status !== 'processing';
+  const isBusy = status === 'uploading' || status === 'processing';
+  // Qué datos faltan para poder procesar (para avisar al usuario, no solo bloquear).
+  const faltantes = [
+    !sucursalId && 'sucursal',
+    !proveedorId && 'proveedor',
+    !file && 'PDF',
+  ].filter(Boolean) as string[];
+  const canProcess = faltantes.length === 0 && !isBusy;
 
   async function handleUpload() {
-    if (!file || !sucursalId || !proveedorId) return;
+    if (isBusy) return;
+    if (faltantes.length > 0) {
+      // Se apretó "Procesar" con datos faltantes: avisamos cuáles.
+      setSuccessMsg(null);
+      setErrorMsg(`Faltan datos para procesar: ${faltantes.join(', ')}.`);
+      return;
+    }
     setStatus('uploading');
     setErrorMsg(null);
     setSuccessMsg(null);
@@ -358,18 +371,19 @@ export function NuevoPage({ tipoComp }: Props) {
               </label>
             </div>
             <button
-              disabled={!canProcess}
+              disabled={isBusy}
               onClick={handleUpload}
+              title={faltantes.length ? `Faltan: ${faltantes.join(', ')}` : undefined}
               style={{
                 height: 42,
                 padding: '0 18px',
                 borderRadius: 8,
                 border: 'none',
-                background: canProcess ? 'var(--blue)' : '#8a94a6',
+                background: canProcess ? 'var(--ok)' : '#8a94a6',
                 color: '#fff',
                 fontWeight: 600,
                 fontSize: 14,
-                cursor: canProcess ? 'pointer' : 'not-allowed',
+                cursor: isBusy ? 'not-allowed' : 'pointer',
                 whiteSpace: 'nowrap',
               }}
             >
@@ -627,7 +641,7 @@ export function NuevoPage({ tipoComp }: Props) {
                 height: 46,
                 borderRadius: 9,
                 border: 'none',
-                background: scope.length === 0 || approving ? '#a9b7dd' : '#6f8fd6',
+                background: scope.length === 0 || approving ? '#9bbfa8' : 'var(--ok)',
                 color: '#fff',
                 fontWeight: 700,
                 fontSize: 15,
