@@ -13,7 +13,8 @@ export async function createFactura(
   return api.postForm<CreateFacturaResponse>('/facturas', form);
 }
 
-// El endpoint SSE es público (EventSource no puede mandar Authorization), no requiere token.
+// El JWT viaja por query param (?token=) porque EventSource no puede mandar el
+// header Authorization; sseUrl lo agrega. El back valida firma + tenant.
 export function subscribeFacturaEvents(
   jobId: string,
   onEvent: (ev: JobEventDto) => void,
