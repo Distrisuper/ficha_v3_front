@@ -7,6 +7,8 @@ export interface AuthPayload {
   id: UUID;
   company_id: string;
   rol: string | null;
+  nombre: string | null;
+  nombreEmpresa: string | null;
 }
 
 export interface LoginResponse {
@@ -28,6 +30,7 @@ export interface Articulo {
   nombre: string;
   codigo: string;
   cantidad: number | string; // el backend persiste esta columna como char(36): puede llegar como string
+  stockCargado: boolean; // true = ítem ya cargado a stock (define "items procesados" en el historial)
   precio_unitario: number;
   total_unitario: number;
   remitoId: UUID;
@@ -54,7 +57,7 @@ export interface Remito {
   total: number;
   companyId: number;
   jobId: string | null;
-  approvedAt: string;
+  approvedAt: string | null; // se llena recién al aprobar (submitMercaderia); null antes
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
