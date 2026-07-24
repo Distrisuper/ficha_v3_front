@@ -80,8 +80,12 @@ export const api = {
   delete: <T>(path: string, options?: RequestOptions) => request<T>(path, { ...options, method: 'DELETE' }),
 };
 
+// EventSource no puede mandar el header Authorization, así que el JWT viaja como
+// query param (?token=). El back valida firma + tenant en el handler SSE.
 export function sseUrl(jobId: string): string {
-  return `${API_BASE}/facturas/${jobId}/events`;
+  const token = getToken();
+  const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+  return `${API_BASE}/facturas/${jobId}/events${qs}`;
 }
 
 export { API_BASE };
