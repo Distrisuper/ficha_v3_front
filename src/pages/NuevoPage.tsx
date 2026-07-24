@@ -423,15 +423,8 @@ export function NuevoPage({ tipoComp }: Props) {
 
           {(status === 'uploading' || status === 'processing') && (
             <div style={{ marginTop: 16 }}>
-              <div style={{ height: 8, background: '#eef1f6', borderRadius: 99, overflow: 'hidden', marginBottom: 10 }}>
+              <div style={{ height: 8, background: '#eef1f6', borderRadius: 99, overflow: 'hidden' }}>
                 <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg,#6f8fd6,#2563eb)', transition: 'width .4s ease' }} />
-              </div>
-              <div className="ds-scroll" style={{ maxHeight: 110, overflow: 'auto', fontSize: 12.5, color: 'var(--muted)' }}>
-                {log.map((e, i) => (
-                  <div key={i} style={{ padding: '3px 0' }}>
-                    {e.text}
-                  </div>
-                ))}
               </div>
             </div>
           )}
