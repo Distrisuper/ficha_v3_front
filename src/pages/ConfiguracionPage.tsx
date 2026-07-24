@@ -8,7 +8,7 @@ import type { Proveedor, Sucursal } from '../types/api';
 type ListKey = 'proveedores' | 'sucursales';
 
 export function ConfiguracionPage() {
-  const { auth, logout } = useAuth();
+  const { auth } = useAuth();
   const { proveedores, sucursales, reloadCatalogos, clearSucursal, sucursalId } = useData();
 
   const [provDraft, setProvDraft] = useState('');
@@ -86,42 +86,18 @@ export function ConfiguracionPage() {
           </span>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.5px', color: 'var(--muted-3)' }}>USUARIO</div>
-            <div style={{ fontSize: 19, fontWeight: 800, color: 'var(--navy)' }}>{auth?.id?.slice(0, 8) ?? '—'}</div>
+            <div style={{ fontSize: 19, fontWeight: 800, color: 'var(--navy)' }}>{auth?.nombre ?? '—'}</div>
             <div style={{ fontSize: 13, color: 'var(--muted-2)', marginTop: 1 }}>{auth?.rol ?? 'Sin rol asignado'}</div>
           </div>
-          <button
-            onClick={logout}
-            style={{
-              height: 40,
-              padding: '0 18px',
-              borderRadius: 9,
-              border: '1px solid #f0c6c6',
-              background: '#fff',
-              color: 'var(--err)',
-              fontWeight: 700,
-              fontSize: '13.5px',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-            }}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-              <path d="M16 17l5-5-5-5" />
-              <path d="M21 12H9" />
-            </svg>
-            Cerrar sesión
-          </button>
         </section>
         <section style={{ ...cardStyle, flex: 1, minWidth: 320, display: 'flex', alignItems: 'center', gap: 16 }}>
           <span style={{ ...avatarStyle, borderRadius: 12, background: 'var(--navy)', color: '#fff', fontWeight: 800, fontSize: 22, fontStyle: 'italic' }}>
-            E
+            {auth?.nombreEmpresa?.trim()?.charAt(0)?.toUpperCase() || 'E'}
           </span>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.5px', color: 'var(--muted-3)' }}>EMPRESA</div>
-            <div style={{ fontSize: 19, fontWeight: 800, color: 'var(--navy)' }}>{auth?.company_id ?? '—'}</div>
-            <div style={{ fontSize: 13, color: 'var(--muted-2)', marginTop: 1 }}>ID de empresa (token JWT)</div>
+            <div style={{ fontSize: 19, fontWeight: 800, color: 'var(--navy)' }}>{auth?.nombreEmpresa ?? '—'}</div>
+            <div style={{ fontSize: 13, color: 'var(--muted-2)', marginTop: 1 }}>ID: {auth?.company_id ?? '—'}</div>
           </div>
         </section>
       </div>

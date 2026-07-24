@@ -7,6 +7,8 @@ export interface AuthPayload {
   id: UUID;
   company_id: string;
   rol: string | null;
+  nombre: string | null;
+  nombreEmpresa: string | null;
 }
 
 export interface LoginResponse {

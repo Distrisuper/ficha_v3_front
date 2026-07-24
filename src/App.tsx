@@ -15,14 +15,14 @@ import type { RemitoTipo } from './types/api';
 import { useSessionBoolean } from './hooks/useSessionState';
 
 function Shell() {
-  const { auth } = useAuth();
+  const { auth, logout } = useAuth();
   const { remitos, filters, setFilters } = useData();
   const [tab, setTab] = useState<TabKey>('nuevo');
   const [collapsed, setCollapsed] = useSessionBoolean('ficha_sidebar_collapsed', false);
   const [tipoComp, setTipoComp] = useState<RemitoTipo>('factura');
 
   const pendCount = useMemo(() => remitos.filter((r) => PENDIENTES_ESTADOS.has(r.estado)).length, [remitos]);
-  const userLabel = auth?.rol ? auth.rol : auth?.id ? auth.id.slice(0, 8) : 'Usuario';
+  const userLabel = auth?.nombre ?? auth?.rol ?? (auth?.id ? auth.id.slice(0, 8) : 'Usuario');
 
   const headerLeft =
     tab === 'nuevo' ? (
@@ -35,7 +35,7 @@ function Shell() {
     <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--bg)' }}>
       <Sidebar tab={tab} onChange={setTab} collapsed={collapsed} onToggleCollapsed={() => setCollapsed((c) => !c)} pendCount={pendCount} />
       <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        <Header userLabel={userLabel} left={headerLeft} />
+        <Header userLabel={userLabel} empresaLabel={auth?.nombreEmpresa} onLogout={logout} left={headerLeft} />
         <div className="ds-scroll" style={{ flex: 1, overflow: 'auto', padding: '26px 30px' }}>
           {tab === 'nuevo' && <NuevoPage tipoComp={tipoComp} />}
           {tab === 'pendientes' && <PendientesPage filters={filters} />}

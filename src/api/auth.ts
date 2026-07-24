@@ -30,7 +30,13 @@ function decodeToken(token: string): AuthPayload | null {
     const json = atob(payloadB64.replace(/-/g, '+').replace(/_/g, '/'));
     const parsed = JSON.parse(json);
     if (!parsed?.id) return null;
-    return { id: parsed.id, company_id: parsed.company_id, rol: parsed.rol ?? null };
+    return {
+      id: parsed.id,
+      company_id: parsed.company_id,
+      rol: parsed.rol ?? null,
+      nombre: parsed.nombre ?? null,
+      nombreEmpresa: parsed.nombreEmpresa ?? null,
+    };
   } catch {
     return null;
   }
