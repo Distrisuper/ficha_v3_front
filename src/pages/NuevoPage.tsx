@@ -70,7 +70,7 @@ export function NuevoPage({ tipoComp }: Props) {
   const [proveedorId, setProveedorId] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState<Status>(() => (loadStored(STORAGE_KEY).length > 0 ? 'done' : 'idle'));
-  const [log, setLog] = useState<{ text: string; type: string }[]>([]);
+  const [, setLog] = useState<{ text: string; type: string }[]>([]);
   const [pct, setPct] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
