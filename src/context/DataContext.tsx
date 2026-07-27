@@ -53,6 +53,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
     void reloadCatalogos();
   }, [reloadCatalogos]);
 
+  const removeRemitoLocal = useCallback((id: string) => {
+    setRemitos((prev) => prev.filter((r) => r.id !== id));
+  }, []);
+
+  const patchRemitoLocal = useCallback((id: string, partial: Partial<Remito>) => {
+    setRemitos((prev) => prev.map((r) => (r.id === id ? { ...r, ...partial } : r)));
+  }, []);
+
   const setSucursal = useCallback(
     (id: UUID, nombre: string) => {
       setSucursalId(id);
@@ -86,6 +94,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       remitosLoading,
       remitosError,
       reloadRemitos,
+      removeRemitoLocal,
+      patchRemitoLocal,
     }),
     [
       proveedores,
@@ -101,6 +111,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       remitosLoading,
       remitosError,
       reloadRemitos,
+      removeRemitoLocal,
+      patchRemitoLocal,
     ],
   );
 

@@ -88,6 +88,28 @@ export function NuevoPage({ tipoComp }: Props) {
   const closeSseRef = useRef<(() => void) | null>(null);
   useEffect(() => () => closeSseRef.current?.(), []);
 
+  // Al abrir la app: si no hay nada cargado localmente, traemos el último comprobante
+  // PROCESADO del usuario y lo dejamos listo para aprobar/rechazar.
+  const ownFetched = useRef(false);
+  useEffect(() => {
+    if (ownFetched.current) return;
+    ownFetched.current = true;
+    if (remitosCargados.length > 0) return; // ya hay algo (resumido de localStorage)
+    void (async () => {
+      try {
+        const data = await remitosApi.own();
+        if (data && data.length > 0) {
+          setRemitosCargados(data);
+          setOriginalRemitos(data);
+          setStatus('done');
+        }
+      } catch {
+        // /own es best-effort: si falla no bloquea la pantalla
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Persistimos el/los remito(s) procesados en localStorage para que sobrevivan a
   // recargas o cambios de pestaña. Se limpia solo al Procesar (aprobar) o al Descartar.
   useEffect(() => {
@@ -119,6 +141,10 @@ export function NuevoPage({ tipoComp }: Props) {
     !file && 'PDF',
   ].filter(Boolean) as string[];
   const canProcess = faltantes.length === 0 && !isBusy;
+  // Hay un comprobante procesado esperando decisión (aprobar/rechazar).
+  const hasPending = remitosCargados.length > 0;
+  // Mientras se procesa o hay uno pendiente, no se puede cargar otro PDF.
+  const locked = isBusy || hasPending;
 
   async function handleUpload() {
     if (isBusy) return;
@@ -323,11 +349,12 @@ export function NuevoPage({ tipoComp }: Props) {
               <label style={labelStyle}>Sucursal</label>
               <select
                 value={sucursalId}
+                disabled={locked}
                 onChange={(e) => {
                   const s = sucursales.find((x) => x.id === e.target.value);
                   setSucursal(e.target.value, s?.nombre ?? '');
                 }}
-                style={selectStyle}
+                style={{ ...selectStyle, opacity: locked ? 0.55 : 1, cursor: locked ? 'not-allowed' : 'pointer' }}
               >
                 <option value="">Seleccionar sucursal</option>
                 {sucursales.map((s) => (
@@ -339,7 +366,12 @@ export function NuevoPage({ tipoComp }: Props) {
             </div>
             <div style={fieldColStyle}>
               <label style={labelStyle}>Proveedor</label>
-              <select value={proveedorId} onChange={(e) => setProveedorId(e.target.value)} style={selectStyle}>
+              <select
+                value={proveedorId}
+                disabled={locked}
+                onChange={(e) => setProveedorId(e.target.value)}
+                style={{ ...selectStyle, opacity: locked ? 0.55 : 1, cursor: locked ? 'not-allowed' : 'pointer' }}
+              >
                 <option value="">Seleccionar proveedor</option>
                 {proveedores.map((p) => (
                   <option key={p.id} value={p.id}>
@@ -351,6 +383,7 @@ export function NuevoPage({ tipoComp }: Props) {
             <div style={{ ...fieldColStyle, minWidth: 220 }}>
               <label style={labelStyle}>Adjuntar PDF:</label>
               <label
+                title={locked ? 'Aprobá o rechazá el comprobante actual para cargar otro' : undefined}
                 style={{
                   height: 42,
                   border: '1.5px dashed #cfd6e2',
@@ -361,37 +394,42 @@ export function NuevoPage({ tipoComp }: Props) {
                   gap: 8,
                   color: file ? 'var(--ink)' : '#a3abba',
                   fontSize: 13,
-                  cursor: 'pointer',
+                  cursor: locked ? 'not-allowed' : 'pointer',
+                  opacity: locked ? 0.55 : 1,
+                  pointerEvents: locked ? 'none' : 'auto',
                 }}
               >
                 {file ? `📄 ${file.name}` : '⬆ Elegir archivo PDF'}
                 <input
                   type="file"
                   accept="application/pdf,.pdf"
+                  disabled={locked}
                   style={{ display: 'none' }}
                   onChange={(e) => setFile(e.target.files?.[0] ?? null)}
                 />
               </label>
             </div>
-            <button
-              disabled={isBusy}
-              onClick={handleUpload}
-              title={faltantes.length ? `Faltan: ${faltantes.join(', ')}` : undefined}
-              style={{
-                height: 42,
-                padding: '0 18px',
-                borderRadius: 8,
-                border: 'none',
-                background: canProcess ? 'var(--ok)' : '#8a94a6',
-                color: '#fff',
-                fontWeight: 600,
-                fontSize: 14,
-                cursor: isBusy ? 'not-allowed' : 'pointer',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {status === 'uploading' || status === 'processing' ? 'Procesando…' : 'Procesar Archivo'}
-            </button>
+            {!hasPending && (
+              <button
+                disabled={isBusy}
+                onClick={handleUpload}
+                title={faltantes.length ? `Faltan: ${faltantes.join(', ')}` : undefined}
+                style={{
+                  height: 42,
+                  padding: '0 18px',
+                  borderRadius: 8,
+                  border: 'none',
+                  background: canProcess ? 'var(--ok)' : '#8a94a6',
+                  color: '#fff',
+                  fontWeight: 600,
+                  fontSize: 14,
+                  cursor: isBusy ? 'not-allowed' : 'pointer',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {status === 'uploading' || status === 'processing' ? 'Procesando…' : 'Procesar Archivo'}
+              </button>
+            )}
             {status === 'done' && remitosCargados.length > 0 && (
               <button
                 onClick={handleDiscard}

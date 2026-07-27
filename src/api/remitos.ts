@@ -46,6 +46,8 @@ export async function listHistorial(sucursalId?: UUID): Promise<Remito[]> {
 export const remitosApi = {
   list: listRemitos,
   history: listHistorial,
+  // Último grupo de remitos PROCESADOS del usuario (para aprobar/rechazar al iniciar).
+  own: () => api.get<Remito[]>('/remitos/own'),
   getByJobId: (jobId: string) => api.get<Remito[]>(`/remitos/by-job/${jobId}`),
   get: (id: UUID) => api.get<Remito | null>(`/remitos/${id}`),
   approve: (id: UUID) => api.patch<Remito>(`/remitos/${id}/approve`),

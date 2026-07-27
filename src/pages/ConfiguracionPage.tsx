@@ -3,7 +3,8 @@ import { useAuth } from '../context/auth-context';
 import { useData } from '../context/data-context';
 import { proveedoresApi } from '../api/proveedores';
 import { sucursalesApi } from '../api/sucursales';
-import { permsFor } from '../utils/roles';
+import { usersApi } from '../api/users';
+import { permsFor, isAdmin } from '../utils/roles';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import type { Proveedor, Sucursal } from '../types/api';
 
@@ -27,6 +28,35 @@ export function ConfiguracionPage() {
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+
+  // Alta de usuario (solo admin, rol 1 o 2).
+  const [uEmail, setUEmail] = useState('');
+  const [uNombre, setUNombre] = useState('');
+  const [uPassword, setUPassword] = useState('');
+  const [uRol, setURol] = useState('3'); // operador por default
+  const [creatingUser, setCreatingUser] = useState(false);
+  const [userMsg, setUserMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(uEmail.trim());
+  const passwordValid = uPassword.length > 8; // más de 8 caracteres
+  const canCreateUser = !creatingUser && emailValid && passwordValid && uNombre.trim() !== '';
+
+  async function createUser() {
+    if (!canCreateUser) return;
+    setCreatingUser(true);
+    setUserMsg(null);
+    try {
+      await usersApi.register({ email: uEmail.trim(), nombre: uNombre.trim(), rol: uRol, password: uPassword });
+      setUserMsg({ type: 'ok', text: `Usuario ${uEmail.trim()} creado correctamente.` });
+      setUEmail('');
+      setUNombre('');
+      setUPassword('');
+      setURol('3');
+    } catch (e) {
+      setUserMsg({ type: 'err', text: e instanceof Error ? e.message : 'No se pudo crear el usuario' });
+    } finally {
+      setCreatingUser(false);
+    }
+  }
 
   async function add(listKey: ListKey, value: string) {
     const val = value.trim();
@@ -174,6 +204,85 @@ export function ConfiguracionPage() {
         />
       </div>
 
+      {isAdmin(auth) && (
+        <section style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
+          <div style={{ padding: '16px 20px', borderBottom: '1px solid #eef1f6', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--navy)' }}>Crear usuario</div>
+            <span style={{ fontSize: 12, color: 'var(--muted-3)' }}>Solo administradores</span>
+          </div>
+          <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <label style={{ ...fieldLabel, flex: 2, minWidth: 200 }}>
+                Email
+                <input
+                  type="email"
+                  value={uEmail}
+                  onChange={(e) => setUEmail(e.target.value)}
+                  placeholder="usuario@empresa.com"
+                  autoComplete="off"
+                  style={{ ...fieldInput, borderColor: uEmail !== '' && !emailValid ? 'var(--err)' : 'var(--border-2)' }}
+                />
+                {uEmail !== '' && !emailValid && <span style={hintErr}>Formato de email inválido</span>}
+              </label>
+              <label style={{ ...fieldLabel, flex: 2, minWidth: 170 }}>
+                Nombre
+                <input
+                  type="text"
+                  value={uNombre}
+                  onChange={(e) => setUNombre(e.target.value)}
+                  placeholder="Nombre y apellido"
+                  style={fieldInput}
+                />
+              </label>
+              <label style={{ ...fieldLabel, flex: 2, minWidth: 160 }}>
+                Contraseña
+                <input
+                  type="password"
+                  value={uPassword}
+                  onChange={(e) => setUPassword(e.target.value)}
+                  placeholder="Más de 8 caracteres"
+                  autoComplete="new-password"
+                  style={{ ...fieldInput, borderColor: uPassword !== '' && !passwordValid ? 'var(--err)' : 'var(--border-2)' }}
+                />
+                {uPassword !== '' && !passwordValid && <span style={hintErr}>Debe tener más de 8 caracteres</span>}
+              </label>
+              <label style={{ ...fieldLabel, flex: 1, minWidth: 140 }}>
+                Rol
+                <select value={uRol} onChange={(e) => setURol(e.target.value)} style={{ ...fieldInput, cursor: 'pointer' }}>
+                  <option value="3">Operador</option>
+                  <option value="2">Administrador</option>
+                </select>
+              </label>
+              <button
+                onClick={createUser}
+                disabled={!canCreateUser}
+                style={{
+                  ...addBtn,
+                  flex: 'none',
+                  background: canCreateUser ? 'var(--ok)' : '#c3cad6',
+                  cursor: canCreateUser ? 'pointer' : 'not-allowed',
+                  opacity: canCreateUser ? 1 : 0.9,
+                }}
+              >
+                {creatingUser ? 'Creando…' : 'Crear usuario'}
+              </button>
+            </div>
+
+            {userMsg && (
+              <div
+                style={{
+                  borderRadius: 8, padding: '10px 12px', fontSize: 13,
+                  background: userMsg.type === 'ok' ? '#eefaf2' : 'var(--err-weak)',
+                  color: userMsg.type === 'ok' ? 'var(--ok)' : 'var(--err)',
+                }}
+              >
+                {userMsg.text}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
       <ConfirmDialog
         open={pendingDelete !== null}
         danger
@@ -243,7 +352,7 @@ function CrudSection({
           {items.length}
         </span>
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column' }}>
+      <div className="ds-scroll" style={{ display: 'flex', flexDirection: 'column', height: 230, overflowY: 'auto' }}>
         {items.length === 0 && <div style={{ padding: '16px 20px', fontSize: 13, color: 'var(--muted-3)' }}>Sin registros.</div>}
         {items.map((it) => {
           const key = `${listKey}:${it.id}`;
@@ -350,3 +459,6 @@ const iconBtn: CSSProperties = {
 const saveBtn: CSSProperties = { height: 38, padding: '0 14px', borderRadius: 8, border: 'none', background: 'var(--ok)', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' };
 const cancelBtn: CSSProperties = { height: 38, padding: '0 12px', borderRadius: 8, border: '1px solid var(--border-2)', background: '#fff', color: 'var(--muted)', fontWeight: 600, fontSize: 13, cursor: 'pointer' };
 const addBtn: CSSProperties = { height: 40, padding: '0 18px', borderRadius: 8, border: 'none', background: 'var(--ok)', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' };
+const fieldLabel: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12.5, fontWeight: 700, color: 'var(--muted-2)' };
+const fieldInput: CSSProperties = { height: 40, border: '1px solid var(--border-2)', borderRadius: 8, padding: '0 13px', fontSize: 14, color: 'var(--ink)', outline: 'none', background: '#fff', fontWeight: 500 };
+const hintErr: CSSProperties = { fontSize: 11.5, fontWeight: 600, color: 'var(--err)' };

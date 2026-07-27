@@ -21,6 +21,9 @@ export interface DataContextValue {
   remitosLoading: boolean;
   remitosError: string | null;
   reloadRemitos: () => Promise<void>;
+  // Updates locales (sin refetch) para reflejar cambios ya confirmados por el back.
+  removeRemitoLocal: (id: string) => void;
+  patchRemitoLocal: (id: string, partial: Partial<Remito>) => void;
 }
 
 export const DataContext = createContext<DataContextValue | null>(null);

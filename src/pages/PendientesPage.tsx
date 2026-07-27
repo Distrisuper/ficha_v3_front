@@ -18,7 +18,7 @@ interface Props {
 }
 
 export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
-  const { remitos, remitosLoading, remitosError, reloadRemitos, proveedores, sucursales, sucursalId } = useData();
+  const { remitos, remitosLoading, remitosError, reloadRemitos, removeRemitoLocal, patchRemitoLocal, proveedores, sucursales, sucursalId } = useData();
   const pendientes = useMemo(
     () => applyFilters(remitos.filter((r) => PENDIENTES_ESTADOS.has(r.estado)), filters),
     [remitos, filters],
@@ -123,8 +123,8 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
   }
 
   async function handleCargarStock(r: Remito) {
-    const articulos = [...getSelected(r)];
-    if (articulos.length === 0) {
+    const seleccionados = [...getSelected(r)];
+    if (seleccionados.length === 0) {
       setNotice('Seleccioná al menos un artículo para cargar al stock.');
       return;
     }
@@ -132,14 +132,22 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
     setNotice(null);
     try {
       // Enviamos los UUID de los artículos marcados; el back procesa la carga a stock.
-      await remitosApi.submitMercaderia(r.id, articulos);
-      setNotice(`Remito ${r.remitoNro || r.id.slice(0, 8)}: ${articulos.length} artículo(s) enviados a stock.`);
+      // submitMercaderia lanza si no es 2xx; si resuelve, fue 200 → actualizamos SOLO
+      // en el front, sin refetch (evita el "pantallazo" de recargar toda la lista).
+      await remitosApi.submitMercaderia(r.id, seleccionados);
+      const cargados = new Set(seleccionados);
+      const restantes = (r.articulos ?? []).filter((a) => !cargados.has(a.id));
+      if (restantes.length === 0) {
+        removeRemitoLocal(r.id); // se cargó todo el remito → sale de pendientes
+      } else {
+        patchRemitoLocal(r.id, { articulos: restantes }); // carga parcial: quedan artículos
+      }
+      setNotice(`Remito ${r.remitoNro || r.id.slice(0, 8)}: ${seleccionados.length} artículo(s) enviados a stock.`);
       setEditingIds((prev) => {
         const n = new Set(prev);
         n.delete(r.id);
         return n;
       });
-      await reloadRemitos();
     } catch (e) {
       setNotice(e instanceof Error ? `Error: ${e.message}` : 'No se pudo cargar el stock');
     } finally {
