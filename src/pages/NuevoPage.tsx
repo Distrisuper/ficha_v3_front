@@ -135,6 +135,7 @@ export function NuevoPage({ tipoComp }: Props) {
     setOriginalRemitos([]);
     setRemitoSel(null);
     try {
+      if (!file) throw new Error('No hay archivo PDF seleccionado');
       const { jobId } = await createFactura(file, sucursalId, proveedorId);
       setLog((l) => [{ text: `Encolado · job ${jobId}`, type: 'sent' }, ...l]);
       setStatus('processing');
