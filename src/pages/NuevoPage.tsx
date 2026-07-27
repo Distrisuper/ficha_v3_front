@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useData } from '../context/data-context';
 import { createFactura, subscribeFacturaEvents } from '../api/facturas';
 import { remitosApi } from '../api/remitos';
 import type { Articulo, JobEventDto, Remito, RemitoTipo } from '../types/api';
 import { money, parseMoneyInput } from '../utils/money';
 import { colorFor } from '../utils/colors';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 
 type Status = 'idle' | 'uploading' | 'processing' | 'done' | 'error';
 
@@ -80,6 +81,7 @@ export function NuevoPage({ tipoComp }: Props) {
   const [editCell, setEditCell] = useState<{ remitoId: string; itemId: string; field: keyof Articulo } | null>(null);
   const [editHeader, setEditHeader] = useState<{ id: string; field: 'facturaNro' | 'remitoNro' } | null>(null);
   const [approving, setApproving] = useState(false);
+  const [confirmProcesar, setConfirmProcesar] = useState(false);
   const [discarding, setDiscarding] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
@@ -629,7 +631,7 @@ export function NuevoPage({ tipoComp }: Props) {
             )}
             <button
               disabled={scope.length === 0 || approving}
-              onClick={handleProcesar}
+              onClick={() => setConfirmProcesar(true)}
               style={{
                 marginTop: 8,
                 height: 46,
@@ -646,6 +648,46 @@ export function NuevoPage({ tipoComp }: Props) {
             </button>
           </div>
         </section>
+
+        {confirmProcesar && (() => {
+          const provNombre = proveedores.find((p) => p.id === proveedorId)?.nombre ?? scope[0]?.proveedor?.nombre ?? '—';
+          const single = scope.length === 1 ? scope[0] : null;
+          const rows: [string, string][] = single
+            ? [
+                ['Nº Factura', single.facturaNro || '—'],
+                ['Nº Remito', single.remitoNro || '—'],
+                ['Proveedor', provNombre],
+                ['Total', money(totals.total)],
+              ]
+            : [
+                ['Comprobantes', String(scope.length)],
+                ['Proveedor', provNombre],
+                ['Total', money(totals.total)],
+              ];
+          return (
+            <ConfirmDialog
+              open
+              busy={approving}
+              title="Confirmar carga de factura"
+              confirmLabel="Cargar factura"
+              onCancel={() => setConfirmProcesar(false)}
+              onConfirm={() => {
+                setConfirmProcesar(false);
+                void handleProcesar();
+              }}
+              message={
+                <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', rowGap: 8, columnGap: 16, marginTop: 4 }}>
+                  {rows.map(([k, v]) => (
+                    <Fragment key={k}>
+                      <span style={{ color: 'var(--muted-2)', fontWeight: 600 }}>{k}</span>
+                      <span style={{ color: 'var(--ink-2)', fontWeight: 700, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{v}</span>
+                    </Fragment>
+                  ))}
+                </div>
+              }
+            />
+          );
+        })()}
     </div>
   );
 }

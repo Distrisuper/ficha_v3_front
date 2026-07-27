@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useData } from '../context/data-context';
 import { remitosApi } from '../api/remitos';
 import { money, fmtDate, fmtCantidad } from '../utils/money';
 import { PENDIENTES_ESTADOS } from '../utils/estados';
 import { applyFilters, type RemitoFilters } from '../utils/filtros';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import type { Remito } from '../types/api';
+
+type ConfirmAction = { type: 'factura' | 'stock'; remito: Remito };
 
 const MAX_ITEMS_HEIGHT = 430; // ~10 filas visibles; el resto scrollea
 
@@ -22,6 +25,8 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
   );
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Modal de confirmación antes de cargar factura / stock.
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [highlightId, setHighlightId] = useState<string | null>(null);
 
@@ -65,6 +70,23 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
   };
   // Solo mostramos la sucursal en cada card cuando el filtro global es "Todas".
   const mostrarSucursal = sucursalId === '';
+
+  // Total de unidades (suma de cantidades) de los artículos indicados (o todos).
+  const totalUnidades = (r: Remito, sel?: Set<string>) =>
+    (r.articulos ?? [])
+      .filter((a) => !sel || sel.has(a.id))
+      .reduce((acc, a) => acc + (Number(a.cantidad) || 0), 0);
+
+  // Total de la factura: usa el del back si viene, sino lo reconstruye desde los ítems.
+  const totalFacturaOf = (r: Remito) => {
+    const items = r.articulos ?? [];
+    const artSubtotal = items.reduce((a, it) => a + Number(it.total_unitario || 0), 0);
+    const subtotal = Number(r.subtotal) > 0 ? Number(r.subtotal) : artSubtotal;
+    const iva = Number(r.iva || 0);
+    const percepciones = Number(r.percepciones || 0);
+    const descuentos = Number(r.descuentos || 0);
+    return Number(r.total) > 0 ? Number(r.total) : subtotal - descuentos + percepciones + iva;
+  };
 
   const allItemIds = (r: Remito) => (r.articulos ?? []).map((a) => a.id);
   // Selección efectiva: la guardada, o TODOS por defecto (todo marcado).
@@ -345,7 +367,7 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                       </button>
                     )}
                     <button
-                      onClick={() => esFacturaACargar ? handleCargarFactura(r) : handleCargarStock(r)}
+                      onClick={() => setConfirmAction({ type: esFacturaACargar ? 'factura' : 'stock', remito: r })}
                       disabled={busyId === r.id || (editing && selCount === 0)}
                       style={{
                         height: 44,
@@ -368,6 +390,47 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
           );
         })}
       </div>
+
+      {confirmAction && (() => {
+        const r = confirmAction.remito;
+        const esFactura = confirmAction.type === 'factura';
+        const rows: [string, string][] = esFactura
+          ? [
+              ['Nº Factura', r.facturaNro || '—'],
+              ['Nº Remito', r.remitoNro || '—'],
+              ['Proveedor', provName(r)],
+              ['Total', money(totalFacturaOf(r))],
+            ]
+          : [
+              ['Nº Remito', r.remitoNro || '—'],
+              ['Proveedor', provName(r)],
+              ['Items', String(totalUnidades(r, getSelected(r)))],
+            ];
+        return (
+          <ConfirmDialog
+            open
+            busy={busyId === r.id}
+            title={esFactura ? 'Confirmar carga de factura' : 'Confirmar carga de remito'}
+            confirmLabel={esFactura ? 'Cargar factura' : 'Cargar remito'}
+            onCancel={() => setConfirmAction(null)}
+            onConfirm={() => {
+              setConfirmAction(null);
+              if (esFactura) handleCargarFactura(r);
+              else handleCargarStock(r);
+            }}
+            message={
+              <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', rowGap: 8, columnGap: 16, marginTop: 4 }}>
+                {rows.map(([k, v]) => (
+                  <Fragment key={k}>
+                    <span style={{ color: 'var(--muted-2)', fontWeight: 600 }}>{k}</span>
+                    <span style={{ color: 'var(--ink-2)', fontWeight: 700, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{v}</span>
+                  </Fragment>
+                ))}
+              </div>
+            }
+          />
+        );
+      })()}
     </div>
   );
 }
