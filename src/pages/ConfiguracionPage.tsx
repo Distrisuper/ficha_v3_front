@@ -130,7 +130,6 @@ export function ConfiguracionPage() {
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.5px', color: 'var(--muted-3)' }}>USUARIO</div>
             <div style={{ fontSize: 19, fontWeight: 800, color: 'var(--navy)' }}>{auth?.nombre ?? '—'}</div>
-            <div style={{ fontSize: 13, color: 'var(--muted-2)', marginTop: 1 }}>{auth?.rol ?? 'Sin rol asignado'}</div>
           </div>
         </section>
         <section style={{ ...cardStyle, flex: 1, minWidth: 320, display: 'flex', alignItems: 'center', gap: 16 }}>
@@ -140,7 +139,6 @@ export function ConfiguracionPage() {
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.5px', color: 'var(--muted-3)' }}>EMPRESA</div>
             <div style={{ fontSize: 19, fontWeight: 800, color: 'var(--navy)' }}>{empresa?.nombre ?? '—'}</div>
-            <div style={{ fontSize: 13, color: 'var(--muted-2)', marginTop: 1 }}>ID: {empresa?.id ?? auth?.company_id ?? '—'}</div>
           </div>
         </section>
       </div>
