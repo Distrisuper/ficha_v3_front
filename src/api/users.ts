@@ -1,5 +1,5 @@
 import { api } from './client';
-import type { User } from '../types/api';
+import type { MeResponse, User } from '../types/api';
 
 export interface RegisterUserInput {
   email: string;
@@ -13,4 +13,7 @@ export interface RegisterUserInput {
 // el company_id lo toma del token, no del body.
 export const usersApi = {
   register: (data: RegisterUserInput) => api.post<User>('/users/register', data),
+  // GET /users/me: devuelve { user, empresa }. Es la única fuente del nombre y la
+  // url de la empresa (no están en el token, ver types/api.ts#AuthPayload).
+  me: () => api.get<MeResponse>('/users/me'),
 };

@@ -17,7 +17,7 @@ import type { RemitoTipo } from './types/api';
 import { useSessionBoolean } from './hooks/useSessionState';
 
 function Shell() {
-  const { auth, logout } = useAuth();
+  const { auth, empresa, logout } = useAuth();
   const { remitos, filters, setFilters } = useData();
   const [tab, setTab] = useState<TabKey>('nuevo');
   const [collapsed, setCollapsed] = useSessionBoolean('ficha_sidebar_collapsed', false);
@@ -37,7 +37,7 @@ function Shell() {
     <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--bg)' }}>
       <Sidebar tab={tab} onChange={setTab} collapsed={collapsed} onToggleCollapsed={() => setCollapsed((c) => !c)} pendCount={pendCount} />
       <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        <Header userLabel={userLabel} empresaLabel={auth?.nombreEmpresa} onLogout={logout} left={headerLeft} />
+        <Header userLabel={userLabel} empresaLabel={empresa?.nombre} onLogout={logout} left={headerLeft} />
         <div className="ds-scroll" style={{ flex: 1, overflow: 'auto', padding: '26px 30px' }}>
           {tab === 'nuevo' && <NuevoPage tipoComp={tipoComp} />}
           {tab === 'pendientes' && <PendientesPage filters={filters} />}

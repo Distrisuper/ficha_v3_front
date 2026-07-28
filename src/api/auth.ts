@@ -35,7 +35,6 @@ function decodeToken(token: string): AuthPayload | null {
       company_id: parsed.company_id,
       rol: parsed.rol ?? null,
       nombre: parsed.nombre ?? null,
-      nombreEmpresa: parsed.nombreEmpresa ?? null,
     };
   } catch {
     return null;

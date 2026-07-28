@@ -17,7 +17,7 @@ interface PendingDelete {
 }
 
 export function ConfiguracionPage() {
-  const { auth } = useAuth();
+  const { auth, empresa } = useAuth();
   const { proveedores, sucursales, reloadCatalogos, clearSucursal, sucursalId } = useData();
   const perms = permsFor(auth);
 
@@ -135,12 +135,12 @@ export function ConfiguracionPage() {
         </section>
         <section style={{ ...cardStyle, flex: 1, minWidth: 320, display: 'flex', alignItems: 'center', gap: 16 }}>
           <span style={{ ...avatarStyle, borderRadius: 12, background: 'var(--navy)', color: '#fff', fontWeight: 800, fontSize: 22, fontStyle: 'italic' }}>
-            {auth?.nombreEmpresa?.trim()?.charAt(0)?.toUpperCase() || 'E'}
+            {empresa?.nombre?.trim()?.charAt(0)?.toUpperCase() || 'E'}
           </span>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.5px', color: 'var(--muted-3)' }}>EMPRESA</div>
-            <div style={{ fontSize: 19, fontWeight: 800, color: 'var(--navy)' }}>{auth?.nombreEmpresa ?? '—'}</div>
-            <div style={{ fontSize: 13, color: 'var(--muted-2)', marginTop: 1 }}>ID: {auth?.company_id ?? '—'}</div>
+            <div style={{ fontSize: 19, fontWeight: 800, color: 'var(--navy)' }}>{empresa?.nombre ?? '—'}</div>
+            <div style={{ fontSize: 13, color: 'var(--muted-2)', marginTop: 1 }}>ID: {empresa?.id ?? auth?.company_id ?? '—'}</div>
           </div>
         </section>
       </div>
