@@ -3,16 +3,30 @@
 
 export type UUID = string;
 
+// Claims del JWT. El nombre y la url de la empresa NO viajan acá a propósito:
+// son mutables y el token vive días. Se piden por GET /users/me.
 export interface AuthPayload {
   id: UUID;
-  company_id: string;
+  company_id: UUID;
   rol: string | null;
   nombre: string | null;
-  nombreEmpresa: string | null;
 }
 
 export interface LoginResponse {
   token: string;
+}
+
+export interface Empresa {
+  id: UUID;
+  nombre: string;
+  url: string | null;
+  active: boolean;
+}
+
+// GET /users/me
+export interface MeResponse {
+  user: User;
+  empresa: Empresa;
 }
 
 export type RemitoTipo = 'remito' | 'factura';
@@ -55,7 +69,7 @@ export interface Remito {
   descuentos: number;
   iva: number;
   total: number;
-  companyId: number;
+  companyId: UUID;
   jobId: string | null;
   approvedAt: string | null; // se llena recién al aprobar (submitMercaderia); null antes
   createdAt: string;
@@ -94,10 +108,9 @@ export interface JobEventDto {
 export interface User {
   id: UUID;
   email: string;
+  nombre: string;
   rol: string | null;
-  company_id: string;
-  user_id: string | null;
-  url: string | null;
+  companyId: UUID;
   active: boolean;
   createdAt: string;
   updatedAt: string;
