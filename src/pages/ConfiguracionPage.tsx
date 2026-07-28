@@ -1,12 +1,13 @@
-import { useState, type CSSProperties } from 'react';
+import { useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import { useAuth } from '../context/auth-context';
 import { useData } from '../context/data-context';
 import { proveedoresApi } from '../api/proveedores';
 import { sucursalesApi } from '../api/sucursales';
 import { usersApi } from '../api/users';
 import { permsFor, isAdmin } from '../utils/roles';
+import { cuitEsValido, formatCuit, soloDigitos } from '../utils/cuit';
 import { ConfirmDialog } from '../components/ConfirmDialog';
-import type { Proveedor, Sucursal } from '../types/api';
+import type { CreateProveedorInput, Proveedor, Sucursal } from '../types/api';
 
 type ListKey = 'proveedores' | 'sucursales';
 
@@ -21,7 +22,6 @@ export function ConfiguracionPage() {
   const { proveedores, sucursales, reloadCatalogos, clearSucursal, sucursalId } = useData();
   const perms = permsFor(auth);
 
-  const [provDraft, setProvDraft] = useState('');
   const [sucDraft, setSucDraft] = useState('');
   const [editKey, setEditKey] = useState<string | null>(null); // "proveedores:<id>" | "sucursales:<id>"
   const [editValue, setEditValue] = useState('');
@@ -58,19 +58,37 @@ export function ConfiguracionPage() {
     }
   }
 
-  async function add(listKey: ListKey, value: string) {
+  async function addSucursal(value: string) {
     const val = value.trim();
     if (!val) return;
     setBusy(true);
     setErrorMsg(null);
     try {
-      if (listKey === 'proveedores') await proveedoresApi.create(val);
-      else await sucursalesApi.create(val);
-      if (listKey === 'proveedores') setProvDraft('');
-      else setSucDraft('');
+      await sucursalesApi.create(val);
+      setSucDraft('');
       await reloadCatalogos();
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : 'No se pudo crear');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Devuelve true si el alta salió bien, para que el form sepa si limpiarse y
+   * cerrarse. Si falla (típico: 409 por CUIT repetido) los campos quedan como
+   * estaban y el usuario corrige sin volver a tipear todo.
+   */
+  async function addProveedor(input: CreateProveedorInput): Promise<boolean> {
+    setBusy(true);
+    setErrorMsg(null);
+    try {
+      await proveedoresApi.create(input);
+      await reloadCatalogos();
+      return true;
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : 'No se pudo crear');
+      return false;
     } finally {
       setBusy(false);
     }
@@ -148,12 +166,25 @@ export function ConfiguracionPage() {
       )}
 
       <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-        <CrudSection
+        <CrudSection<Proveedor>
           title="Proveedores"
           items={proveedores}
-          draft={provDraft}
-          onDraftChange={setProvDraft}
-          onAdd={() => add('proveedores', provDraft)}
+          // El alta de proveedor son 3 campos, así que en vez del input inline
+          // el footer muestra un botón que despliega el form completo.
+          add={{
+            mode: 'form',
+            renderForm: (close) => (
+              <ProveedorAddForm
+                busy={busy}
+                onSubmit={addProveedor}
+                onCancel={close}
+              />
+            ),
+          }}
+          subtitle={(p) => {
+            const partes = [p.razonSocial, p.cuit ? formatCuit(p.cuit) : null].filter(Boolean);
+            return partes.length ? partes.join(' · ') : null;
+          }}
           editKey={editKey}
           editValue={editValue}
           onEditValueChange={setEditValue}
@@ -169,17 +200,20 @@ export function ConfiguracionPage() {
           onRequestDelete={(id, name) => setPendingDelete({ listKey: 'proveedores', id, name })}
           listKey="proveedores"
           busy={busy}
-          placeholder="Nuevo proveedor…"
           canAdd={perms.proveedorAdd}
           canEdit={perms.proveedorEdit}
           canDelete={perms.proveedorDelete}
         />
-        <CrudSection
+        <CrudSection<Sucursal>
           title="Sucursales"
           items={sucursales}
-          draft={sucDraft}
-          onDraftChange={setSucDraft}
-          onAdd={() => add('sucursales', sucDraft)}
+          add={{
+            mode: 'inline',
+            draft: sucDraft,
+            onDraftChange: setSucDraft,
+            onAdd: () => addSucursal(sucDraft),
+            placeholder: 'Nueva sucursal…',
+          }}
           editKey={editKey}
           editValue={editValue}
           onEditValueChange={setEditValue}
@@ -195,7 +229,6 @@ export function ConfiguracionPage() {
           onRequestDelete={(id, name) => setPendingDelete({ listKey: 'sucursales', id, name })}
           listKey="sucursales"
           busy={busy}
-          placeholder="Nueva sucursal…"
           canAdd={perms.sucursalAdd}
           canEdit={perms.sucursalEdit}
           canDelete={perms.sucursalDelete}
@@ -299,12 +332,29 @@ export function ConfiguracionPage() {
   );
 }
 
-interface CrudSectionProps {
+/**
+ * Cómo se da de alta en la sección:
+ * - `inline`: un input de una sola línea en el pie (sucursales, que sólo tienen
+ *   nombre).
+ * - `form`: el pie muestra un botón "Agregar" que despliega un form completo
+ *   (proveedores, que además del nombre piden razón social y CUIT).
+ */
+type AddMode =
+  | {
+      mode: 'inline';
+      draft: string;
+      onDraftChange: (v: string) => void;
+      onAdd: () => void;
+      placeholder: string;
+    }
+  | { mode: 'form'; renderForm: (close: () => void) => ReactNode };
+
+interface CrudSectionProps<T extends { id: string; nombre: string }> {
   title: string;
-  items: (Proveedor | Sucursal)[];
-  draft: string;
-  onDraftChange: (v: string) => void;
-  onAdd: () => void;
+  items: T[];
+  add: AddMode;
+  /** Segunda línea de la fila (ej. razón social · CUIT). null = no se muestra. */
+  subtitle?: (item: T) => ReactNode;
   editKey: string | null;
   editValue: string;
   onEditValueChange: (v: string) => void;
@@ -314,18 +364,16 @@ interface CrudSectionProps {
   onRequestDelete: (id: string, name: string) => void;
   listKey: ListKey;
   busy: boolean;
-  placeholder: string;
   canAdd: boolean;
   canEdit: boolean;
   canDelete: boolean;
 }
 
-function CrudSection({
+function CrudSection<T extends { id: string; nombre: string }>({
   title,
   items,
-  draft,
-  onDraftChange,
-  onAdd,
+  add,
+  subtitle,
   editKey,
   editValue,
   onEditValueChange,
@@ -335,12 +383,14 @@ function CrudSection({
   onRequestDelete,
   listKey,
   busy,
-  placeholder,
   canAdd,
   canEdit,
   canDelete,
-}: CrudSectionProps) {
-  const canSubmitAdd = !busy && draft.trim().length > 0;
+}: CrudSectionProps<T>) {
+  // Sólo aplica al modo form: el form arranca cerrado y se despliega al tocar
+  // "Agregar".
+  const [addOpen, setAddOpen] = useState(false);
+  const canSubmitAdd = add.mode === 'inline' && !busy && add.draft.trim().length > 0;
   const canSubmitEdit = !busy && editValue.trim().length > 0;
   return (
     <section style={{ flex: 1, minWidth: 400, background: '#fff', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
@@ -355,6 +405,7 @@ function CrudSection({
         {items.map((it) => {
           const key = `${listKey}:${it.id}`;
           const editing = editKey === key;
+          const sub = subtitle?.(it);
           return (
             <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 20px', borderBottom: '1px solid #f4f6fa' }}>
               {editing ? (
@@ -378,7 +429,10 @@ function CrudSection({
                 </>
               ) : (
                 <>
-                  <span style={{ flex: 1, fontSize: '14.5px', color: 'var(--ink-2)', fontWeight: 500 }}>{it.nombre}</span>
+                  <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span style={{ fontSize: '14.5px', color: 'var(--ink-2)', fontWeight: 500 }}>{it.nombre}</span>
+                    {sub && <span style={{ fontSize: 12, color: 'var(--muted-3)', fontWeight: 500 }}>{sub}</span>}
+                  </span>
                   {canEdit && (
                     <button onClick={() => onStartEdit(it.id, it.nombre)} title="Editar" style={iconBtn}>
                       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -402,19 +456,19 @@ function CrudSection({
           );
         })}
       </div>
-      {canAdd && (
+      {canAdd && add.mode === 'inline' && (
         <div style={{ display: 'flex', gap: 10, padding: '16px 20px', background: '#f8fafc', borderTop: '1px solid #eef1f6' }}>
           <input
-            value={draft}
-            onChange={(e) => onDraftChange(e.target.value)}
-            placeholder={placeholder}
-            onKeyDown={(e) => e.key === 'Enter' && canSubmitAdd && onAdd()}
+            value={add.draft}
+            onChange={(e) => add.onDraftChange(e.target.value)}
+            placeholder={add.placeholder}
+            onKeyDown={(e) => e.key === 'Enter' && canSubmitAdd && add.onAdd()}
             style={{ flex: 1, height: 40, border: '1px solid var(--border-2)', borderRadius: 8, padding: '0 13px', fontSize: 14, color: 'var(--ink)', outline: 'none' }}
           />
           <button
-            onClick={onAdd}
+            onClick={add.onAdd}
             disabled={!canSubmitAdd}
-            title={draft.trim() ? undefined : 'Ingresá un nombre para habilitar'}
+            title={add.draft.trim() ? undefined : 'Ingresá un nombre para habilitar'}
             style={{
               ...addBtn,
               background: canSubmitAdd ? 'var(--ok)' : '#c3cad6',
@@ -426,7 +480,121 @@ function CrudSection({
           </button>
         </div>
       )}
+      {canAdd && add.mode === 'form' && (
+        <div style={{ padding: '16px 20px', background: '#f8fafc', borderTop: '1px solid #eef1f6' }}>
+          {addOpen ? (
+            add.renderForm(() => setAddOpen(false))
+          ) : (
+            <button onClick={() => setAddOpen(true)} style={{ ...addBtn, width: '100%' }}>
+              Agregar
+            </button>
+          )}
+        </div>
+      )}
     </section>
+  );
+}
+
+interface ProveedorAddFormProps {
+  busy: boolean;
+  /** Devuelve true si el alta se guardó: recién ahí se limpia y se cierra. */
+  onSubmit: (input: CreateProveedorInput) => Promise<boolean>;
+  onCancel: () => void;
+}
+
+/**
+ * Form de alta de proveedor. Estado propio (mismo patrón que el bloque "Crear
+ * usuario" de esta página): un useState por campo y booleanos derivados para la
+ * validación, sin librería de forms.
+ *
+ * El CUIT se guarda en el estado como dígitos y se muestra enmascarado; lo que
+ * viaja a la API son los 11 dígitos pelados.
+ */
+function ProveedorAddForm({ busy, onSubmit, onCancel }: ProveedorAddFormProps) {
+  const [nombre, setNombre] = useState('');
+  const [razonSocial, setRazonSocial] = useState('');
+  const [cuit, setCuit] = useState('');
+
+  const nombreValid = nombre.trim() !== '';
+  const razonValid = razonSocial.trim() !== '';
+  const cuitValid = cuitEsValido(cuit);
+  const canSubmit = !busy && nombreValid && razonValid && cuitValid;
+
+  async function submit() {
+    if (!canSubmit) return;
+    const ok = await onSubmit({ nombre, razonSocial, cuit });
+    if (!ok) return; // el error ya se muestra arriba; los campos quedan para corregir
+    setNombre('');
+    setRazonSocial('');
+    setCuit('');
+    onCancel();
+  }
+
+  const onEnter = (e: KeyboardEvent) => {
+    if (e.key === 'Enter') void submit();
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <label style={fieldLabel}>
+        Nombre
+        <input
+          autoFocus
+          value={nombre}
+          onChange={(e) => setNombre(e.target.value)}
+          onKeyDown={onEnter}
+          placeholder="Cómo lo llamás internamente"
+          style={fieldInput}
+        />
+      </label>
+      <label style={fieldLabel}>
+        Razón social
+        <input
+          value={razonSocial}
+          onChange={(e) => setRazonSocial(e.target.value)}
+          onKeyDown={onEnter}
+          placeholder="Denominación legal"
+          style={fieldInput}
+        />
+      </label>
+      <label style={fieldLabel}>
+        CUIT
+        <input
+          // La máscara es sólo visual: el estado guarda dígitos y el input los
+          // muestra formateados, así el usuario puede tipear con o sin guiones.
+          value={formatCuit(cuit, '')}
+          onChange={(e) => setCuit(soloDigitos(e.target.value).slice(0, 11))}
+          onKeyDown={onEnter}
+          placeholder="xx-xxxxxxxx-x"
+          inputMode="numeric"
+          style={{ ...fieldInput, borderColor: cuit !== '' && !cuitValid ? 'var(--err)' : 'var(--border-2)' }}
+        />
+        {cuit !== '' && !cuitValid && (
+          <span style={hintErr}>
+            {cuit.length < 11 ? 'El CUIT debe tener 11 dígitos' : 'El CUIT no es válido'}
+          </span>
+        )}
+      </label>
+      <div style={{ display: 'flex', gap: 10 }}>
+        <button
+          onClick={() => void submit()}
+          disabled={!canSubmit}
+          title={canSubmit ? undefined : 'Completá los tres campos para habilitar'}
+          style={{
+            ...addBtn,
+            flex: 1,
+            background: canSubmit ? 'var(--ok)' : '#c3cad6',
+            cursor: canSubmit ? 'pointer' : 'not-allowed',
+            opacity: canSubmit ? 1 : 0.9,
+          }}
+        >
+          {busy ? 'Guardando…' : 'Guardar proveedor'}
+        </button>
+        <button onClick={onCancel} style={{ ...cancelBtn, height: 40 }}>
+          Cancelar
+        </button>
+      </div>
+    </div>
   );
 }
 

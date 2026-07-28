@@ -80,9 +80,22 @@ export interface Remito {
 
 export interface Proveedor {
   id: UUID;
+  /** Alias operativo. Es lo único editable después del alta. */
   nombre: string;
+  /** Denominación legal. null en los proveedores cargados antes del campo. */
+  razonSocial: string | null;
+  /** 11 dígitos sin guiones. El formato xx-xxxxxxxx-x es sólo presentación (ver utils/cuit.ts). */
+  cuit: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Body de POST /proveedores. Los tres campos son obligatorios en el alta. */
+export interface CreateProveedorInput {
+  nombre: string;
+  razonSocial: string;
+  /** Se manda en dígitos, sin la máscara. */
+  cuit: string;
 }
 
 export interface Sucursal {

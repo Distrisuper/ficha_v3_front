@@ -39,7 +39,7 @@ function Shell() {
       <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <Header userLabel={userLabel} empresaLabel={empresa?.nombre} onLogout={logout} left={headerLeft} />
         <div className="ds-scroll" style={{ flex: 1, overflow: 'auto', padding: '26px 30px' }}>
-          {tab === 'nuevo' && <NuevoPage tipoComp={tipoComp} />}
+          {tab === 'nuevo' && <NuevoPage tipoComp={tipoComp} onGoConfig={() => setTab('config')} />}
           {tab === 'pendientes' && <PendientesPage filters={filters} />}
           {tab === 'historial' && <HistorialPage filters={filters} />}
           {tab === 'config' && <ConfiguracionPage />}

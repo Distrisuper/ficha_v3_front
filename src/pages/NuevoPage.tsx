@@ -1,16 +1,21 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useData } from '../context/data-context';
+import { useAuth } from '../context/auth-context';
+import { permsFor } from '../utils/roles';
 import { createFactura, subscribeFacturaEvents } from '../api/facturas';
 import { remitosApi } from '../api/remitos';
 import type { Articulo, JobEventDto, Remito, RemitoTipo } from '../types/api';
 import { money, parseMoneyInput } from '../utils/money';
 import { colorFor } from '../utils/colors';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { useLocalStorage } from '../hooks/useLocalStorage';
 
 type Status = 'idle' | 'uploading' | 'processing' | 'done' | 'error';
 
 interface Props {
   tipoComp: RemitoTipo;
+  // Salto a la pestaña Configuración (para el aviso de catálogos vacíos).
+  onGoConfig?: () => void;
 }
 
 const STORAGE_KEY = 'ficha_remitos_procesados';
@@ -65,10 +70,13 @@ function recalcRemito(r: Remito, orig?: Remito): Remito {
   return { ...r, articulos, subtotal, iva, total };
 }
 
-export function NuevoPage({ tipoComp }: Props) {
-  const { proveedores, sucursales, sucursalId, setSucursal, reloadRemitos } = useData();
+export function NuevoPage({ tipoComp, onGoConfig }: Props) {
+  const { proveedores, sucursales, catalogosLoading, sucursalId, setSucursal, reloadRemitos } = useData();
+  const { auth } = useAuth();
+  const perms = permsFor(auth);
 
-  const [proveedorId, setProveedorId] = useState('');
+  // Persistido en localStorage (igual que la sucursal) para que sobreviva al cerrar/abrir.
+  const [proveedorId, setProveedorId] = useLocalStorage('ficha_proveedor_id');
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState<Status>(() => (loadStored(STORAGE_KEY).length > 0 ? 'done' : 'idle'));
   const [, setLog] = useState<{ text: string; type: string }[]>([]);
@@ -102,6 +110,8 @@ export function NuevoPage({ tipoComp }: Props) {
           setRemitosCargados(data);
           setOriginalRemitos(data);
           setStatus('done');
+          // Reflejamos el proveedor del comprobante cargado en el select.
+          if (data[0]?.proveedorId) setProveedorId(data[0].proveedorId);
         }
       } catch {
         // /own es best-effort: si falla no bloquea la pantalla
@@ -141,6 +151,16 @@ export function NuevoPage({ tipoComp }: Props) {
     !file && 'PDF',
   ].filter(Boolean) as string[];
   const canProcess = faltantes.length === 0 && !isBusy;
+  // Catálogos vacíos: sin sucursales o sin proveedores no se puede cargar nada,
+  // así que avisamos y mandamos a Configuración (esperamos a que carguen primero).
+  const catalogosFaltantes = [
+    sucursales.length === 0 && 'sucursales',
+    proveedores.length === 0 && 'proveedores',
+  ].filter(Boolean) as string[];
+  const showCatalogosWarn = !catalogosLoading && catalogosFaltantes.length > 0;
+  // El operador puede crear proveedores pero no sucursales: si le falta una sucursal,
+  // no alcanza con que vaya a Configuración, necesita un administrador.
+  const needsAdmin = sucursales.length === 0 && !perms.sucursalAdd;
   // Hay un comprobante procesado esperando decisión (aprobar/rechazar).
   const hasPending = remitosCargados.length > 0;
   // Mientras se procesa o hay uno pendiente, no se puede cargar otro PDF.
@@ -337,6 +357,53 @@ export function NuevoPage({ tipoComp }: Props) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 1100 }}>
+        {showCatalogosWarn && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              flexWrap: 'wrap',
+              background: 'var(--err-weak)',
+              color: 'var(--err)',
+              border: '1px solid #f0c6c6',
+              borderRadius: 8,
+              padding: '10px 12px',
+              fontSize: 13,
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ flex: 'none' }}>
+              <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+              <path d="M12 9v4M12 17h.01" />
+            </svg>
+            <span style={{ flex: 1, minWidth: 220 }}>
+              No hay {catalogosFaltantes.join(' ni ')} cargados.{' '}
+              {needsAdmin
+                ? 'Pedile a un administrador que dé de alta una sucursal en Configuración para poder cargar comprobantes.'
+                : `Andá a Configuración y dá de alta al menos ${catalogosFaltantes.length > 1 ? 'una sucursal y un proveedor' : catalogosFaltantes[0] === 'sucursales' ? 'una sucursal' : 'un proveedor'} para poder cargar comprobantes.`}
+            </span>
+            {onGoConfig && (
+              <button
+                onClick={onGoConfig}
+                style={{
+                  flex: 'none',
+                  height: 32,
+                  padding: '0 13px',
+                  borderRadius: 7,
+                  border: '1px solid var(--err)',
+                  background: '#fff',
+                  color: 'var(--err)',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Ir a Configuración
+              </button>
+            )}
+          </div>
+        )}
+
         {tipoComp === 'remito' && (
           <div style={{ fontSize: 12.5, color: 'var(--muted-3)', background: '#f4f8ff', border: '1px solid var(--border)', borderRadius: 8, padding: '9px 13px' }}>
             La API sólo tiene un endpoint de carga (factura); el PDF se procesa igual, sin desglose de IVA abajo.

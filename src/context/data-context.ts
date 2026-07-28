@@ -5,6 +5,9 @@ import type { RemitoFilters } from '../utils/filtros';
 export interface DataContextValue {
   proveedores: Proveedor[];
   sucursales: Sucursal[];
+  // true hasta que termina el primer fetch de catálogos: sirve para no avisar
+  // "no hay proveedores/sucursales" mientras todavía se están trayendo.
+  catalogosLoading: boolean;
   reloadCatalogos: () => Promise<void>;
 
   sucursalId: string;

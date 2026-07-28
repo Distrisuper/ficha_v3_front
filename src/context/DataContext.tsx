@@ -10,6 +10,7 @@ import { DataContext, type DataContextValue } from './data-context';
 export function DataProvider({ children }: { children: ReactNode }) {
   const [proveedores, setProveedores] = useState<Proveedor[]>([]);
   const [sucursales, setSucursales] = useState<Sucursal[]>([]);
+  const [catalogosLoading, setCatalogosLoading] = useState(true);
   const [sucursalId, setSucursalId] = useLocalStorage('ficha_sucursal_id');
   const [sucursalNombre, setSucursalNombre] = useLocalStorage('ficha_sucursal_nombre');
   const [remitos, setRemitos] = useState<Remito[]>([]);
@@ -19,9 +20,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [remitosError, setRemitosError] = useState<string | null>(null);
 
   const reloadCatalogos = useCallback(async () => {
-    const [provs, sucs] = await Promise.all([proveedoresApi.list(), sucursalesApi.list()]);
-    setProveedores(provs ?? []);
-    setSucursales(sucs ?? []);
+    setCatalogosLoading(true);
+    try {
+      const [provs, sucs] = await Promise.all([proveedoresApi.list(), sucursalesApi.list()]);
+      setProveedores(provs ?? []);
+      setSucursales(sucs ?? []);
+    } finally {
+      // El error se sigue propagando (ConfiguracionPage lo muestra al crear/editar).
+      setCatalogosLoading(false);
+    }
   }, []);
 
   const reloadRemitos = useCallback(async () => {
@@ -82,6 +89,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     () => ({
       proveedores,
       sucursales,
+      catalogosLoading,
       reloadCatalogos,
       sucursalId,
       sucursalNombre,
@@ -100,6 +108,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     [
       proveedores,
       sucursales,
+      catalogosLoading,
       reloadCatalogos,
       sucursalId,
       sucursalNombre,
