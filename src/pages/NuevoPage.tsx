@@ -356,7 +356,7 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 1100 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 1100, height: '100%' }}>
         {showCatalogosWarn && (
           <div
             style={{
@@ -364,6 +364,7 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
               alignItems: 'center',
               gap: 12,
               flexWrap: 'wrap',
+              flexShrink: 0,
               background: 'var(--err-weak)',
               color: 'var(--err)',
               border: '1px solid #f0c6c6',
@@ -405,12 +406,12 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
         )}
 
         {tipoComp === 'remito' && (
-          <div style={{ fontSize: 12.5, color: 'var(--muted-3)', background: '#f4f8ff', border: '1px solid var(--border)', borderRadius: 8, padding: '9px 13px' }}>
+          <div style={{ fontSize: 12.5, color: 'var(--muted-3)', background: '#f4f8ff', border: '1px solid var(--border)', borderRadius: 8, padding: '9px 13px', flexShrink: 0 }}>
             La API sólo tiene un endpoint de carga (factura); el PDF se procesa igual, sin desglose de IVA abajo.
           </div>
         )}
 
-        <section style={cardStyle}>
+        <section style={{ ...cardStyle, flexShrink: 0 }}>
           <div style={{ display: 'flex', gap: 22, alignItems: 'flex-end', flexWrap: 'wrap' }}>
             <div style={fieldColStyle}>
               <label style={labelStyle}>Sucursal</label>
@@ -548,8 +549,8 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
           )}
         </section>
 
-        <section style={{ ...cardStyle, padding: 0, overflow: 'hidden' }}>
-          <div className="ds-scroll" style={{ height: 360, overflow: 'auto' }}>
+        <section style={{ ...cardStyle, padding: 0, overflow: 'hidden', flex: 1, minHeight: 220, display: 'flex', flexDirection: 'column' }}>
+          <div className="ds-scroll" style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
             <div style={{ minWidth: 600 }}>
               <div style={gridHeaderStyle}>
                 <span>CÓDIGO</span>
@@ -630,7 +631,7 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
           </div>
         </section>
 
-        <section style={{ ...cardStyle, display: 'flex', gap: 26, flexWrap: 'wrap', justifyContent: 'space-between' }}>
+        <section style={{ ...cardStyle, display: 'flex', gap: 26, flexWrap: 'wrap', justifyContent: 'space-between', flexShrink: 0 }}>
           <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 7, width: 230 }}>
               <label style={labelStyle}>Nº Factura <span style={{ fontWeight: 400, color: 'var(--muted-3)' }}>· doble clic para editar</span></label>

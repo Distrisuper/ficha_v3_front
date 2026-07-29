@@ -4,7 +4,7 @@ import { remitosApi } from '../api/remitos';
 import { money, fmtDate } from '../utils/money';
 import { HISTORIAL_ESTADOS, historialEstadoView } from '../utils/estados';
 import { applyFilters, type RemitoFilters } from '../utils/filtros';
-import { downloadCsv } from '../utils/csv';
+// import { downloadCsv } from '../utils/csv'; // export CSV deshabilitado, ver exportCsv más abajo
 import type { Remito } from '../types/api';
 
 interface Props {
@@ -84,28 +84,30 @@ export function HistorialPage({ filters }: Props) {
     [historial, currentPage],
   );
 
-  const exportCsv = useCallback(() => {
-    const headers = [
-      'Sucursal', 'Proveedor', 'Fecha', 'Remito', 'Factura', 'Estado', 'Artículos', 'Items',
-      'Total', 'Fecha procesado', 'Fecha carga remito',
-    ];
-    const rows = historial.map((h) => [
-      sucName(h),
-      provName(h),
-      fmtDate(h.fecha),
-      h.remitoNro ?? '',
-      h.facturaNro ?? '',
-      historialEstadoView(h.estado).label,
-      totalArts(h),
-      totalItems(h),
-      h.total,
-      fmtDate(h.createdAt),
-      fmtDate(h.approvedAt),
-    ]);
-    downloadCsv(`historial_${new Date().toISOString().slice(0, 10)}.csv`, headers, rows);
-  }, [historial, provName, sucName]);
+  // Export CSV deshabilitado (pendiente reemplazo por exportar XLSX). Se deja la
+  // lógica comentada como referencia para cuando se implemente el nuevo export.
+  // const exportCsv = useCallback(() => {
+  //   const headers = [
+  //     'Sucursal', 'Proveedor', 'Fecha', 'Remito', 'Factura', 'Estado', 'Artículos', 'Items',
+  //     'Total', 'Fecha procesado', 'Fecha carga remito',
+  //   ];
+  //   const rows = historial.map((h) => [
+  //     sucName(h),
+  //     provName(h),
+  //     fmtDate(h.fecha),
+  //     h.remitoNro ?? '',
+  //     h.facturaNro ?? '',
+  //     historialEstadoView(h.estado).label,
+  //     totalArts(h),
+  //     totalItems(h),
+  //     h.total,
+  //     fmtDate(h.createdAt),
+  //     fmtDate(h.approvedAt),
+  //   ]);
+  //   downloadCsv(`historial_${new Date().toISOString().slice(0, 10)}.csv`, headers, rows);
+  // }, [historial, provName, sucName]);
 
-  const exportDisabled = loading || historial.length === 0;
+  // const exportDisabled = loading || historial.length === 0;
 
   return (
     <section style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
@@ -118,6 +120,7 @@ export function HistorialPage({ filters }: Props) {
         <span style={{ fontSize: 13, color: 'var(--muted-3)' }}>
           {loading ? 'Cargando…' : `${historial.length} registro${historial.length === 1 ? '' : 's'}`}
         </span>
+        {/* Export CSV deshabilitado, pendiente reemplazo por exportar XLSX.
         <button
           type="button"
           onClick={exportCsv}
@@ -130,6 +133,7 @@ export function HistorialPage({ filters }: Props) {
         >
           Exportar CSV
         </button>
+        */}
       </div>
 
       {error && (

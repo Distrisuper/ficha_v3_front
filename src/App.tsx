@@ -34,7 +34,7 @@ function Shell() {
     ) : null;
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--bg)' }}>
+    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: 'var(--bg)' }}>
       <Sidebar tab={tab} onChange={setTab} collapsed={collapsed} onToggleCollapsed={() => setCollapsed((c) => !c)} pendCount={pendCount} />
       <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <Header userLabel={userLabel} empresaLabel={empresa?.nombre} onLogout={logout} left={headerLeft} />

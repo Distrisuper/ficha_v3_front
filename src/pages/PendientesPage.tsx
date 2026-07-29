@@ -189,7 +189,7 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
       )}
       {remitosLoading && <div style={{ fontSize: 13, color: 'var(--muted-3)' }}>Cargando remitos…</div>}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 1100 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 1100 }}>
         {!remitosLoading && pendientes.length === 0 && (
           <div style={{ fontSize: 13, color: 'var(--muted-3)', padding: '20px 0' }}>No hay remitos pendientes.</div>
         )}
