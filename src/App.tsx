@@ -3,6 +3,7 @@ import { AuthProvider } from './context/AuthContext';
 import { useAuth } from './context/auth-context';
 import { DataProvider } from './context/DataContext';
 import { useData } from './context/data-context';
+import { SseProvider } from './context/SseContext';
 import { Login } from './components/Login';
 import { Sidebar, type TabKey } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -54,10 +55,16 @@ function Shell() {
 function Gate() {
   const { auth } = useAuth();
   if (!auth) return <Login />;
+  // SseProvider adentro del Gate: la conexión nace con la sesión y muere con el
+  // logout, sin que ninguna pantalla tenga que abrirla o cerrarla. Va por fuera
+  // de Shell para que sobreviva a los cambios de pestaña — que es todo el punto
+  // de haber pasado a un stream global.
   return (
-    <DataProvider>
-      <Shell />
-    </DataProvider>
+    <SseProvider>
+      <DataProvider>
+        <Shell />
+      </DataProvider>
+    </SseProvider>
   );
 }
 

@@ -110,13 +110,8 @@ export interface CreateFacturaResponse {
   facturaId: UUID;
 }
 
-export type JobEventType = 'waiting' | 'active' | 'progress' | 'completed' | 'failed';
-
-export interface JobEventDto {
-  jobId: string;
-  type: JobEventType;
-  data?: unknown;
-}
+// JobEventDto / JobEventType se eliminaron: eran el contrato del stream por job.
+// El progreso ahora llega como DomainEvent por el stream global (types/events.ts).
 
 export interface User {
   id: UUID;
