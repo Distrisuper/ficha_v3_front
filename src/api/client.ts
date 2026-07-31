@@ -33,8 +33,6 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     const token = getToken();
     if (token) finalHeaders.set('Authorization', `Bearer ${token}`);
   }
-  console.log("mandamos a ", API_BASE, path, rest, finalHeaders);
-
   const res = await fetch(`${API_BASE}${path}`, { ...rest, headers: finalHeaders });
 
   if (res.status === 401) {
@@ -80,12 +78,7 @@ export const api = {
   delete: <T>(path: string, options?: RequestOptions) => request<T>(path, { ...options, method: 'DELETE' }),
 };
 
-// EventSource no puede mandar el header Authorization, así que el JWT viaja como
-// query param (?token=). El back valida firma + tenant en el handler SSE.
-export function sseUrl(jobId: string): string {
-  const token = getToken();
-  const qs = token ? `?token=${encodeURIComponent(token)}` : '';
-  return `${API_BASE}/facturas/${jobId}/events${qs}`;
-}
+// sseUrl() se eliminó junto con el stream por job. El JWT ya no viaja nunca por
+// query string: el stream global usa un ticket de un solo uso (ver api/events.ts).
 
 export { API_BASE };

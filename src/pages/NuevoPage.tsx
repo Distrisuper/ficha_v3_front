@@ -2,9 +2,12 @@ import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } fr
 import { useData } from '../context/data-context';
 import { useAuth } from '../context/auth-context';
 import { permsFor } from '../utils/roles';
-import { createFactura, subscribeFacturaEvents } from '../api/facturas';
+import { createFactura } from '../api/facturas';
 import { remitosApi } from '../api/remitos';
-import type { Articulo, JobEventDto, Remito, RemitoTipo } from '../types/api';
+import { ApiError } from '../api/client';
+import { useProceso } from '../hooks/useProceso';
+import type { ProcesoStage } from '../types/events';
+import type { Articulo, Remito, RemitoTipo } from '../types/api';
 import { money, parseMoneyInput } from '../utils/money';
 import { colorFor } from '../utils/colors';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -80,8 +83,13 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState<Status>(() => (loadStored(STORAGE_KEY).length > 0 ? 'done' : 'idle'));
   const [, setLog] = useState<{ text: string; type: string }[]>([]);
-  const [pct, setPct] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Proceso que esta pantalla está mirando. El stream ya está abierto a nivel
+  // sesión: acá sólo se declara "me interesa este processId".
+  const [jobId, setJobId] = useState<string | null>(null);
+  const proceso = useProceso(jobId);
+  const pct = status === 'uploading' ? 2 : proceso.pct;
 
   const [remitosCargados, setRemitosCargados] = useState<Remito[]>(() => loadStored(STORAGE_KEY));
   const [originalRemitos, setOriginalRemitos] = useState<Remito[]>(() => loadStored(ORIGINAL_KEY));
@@ -93,8 +101,32 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
   const [discarding, setDiscarding] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  const closeSseRef = useRef<(() => void) | null>(null);
-  useEffect(() => () => closeSseRef.current?.(), []);
+  // Reacción a los estados terminales del proceso.
+  //
+  // Va en un effect y no en un callback del hook a propósito: el resultado
+  // puede llegar mientras el usuario está en otra pestaña. Al volver, el estado
+  // ya está en el context y esta pantalla lo levanta sin haber estado montada
+  // cuando pasó. Ese es exactamente el caso que el stream por job no cubría.
+  useEffect(() => {
+    if (!jobId) return;
+
+    if (proceso.estado === 'completado') {
+      setStatus('done');
+      void loadRemitosByJob(jobId);
+      setJobId(null);
+    } else if (proceso.estado === 'fallido') {
+      setStatus('error');
+      setErrorMsg(proceso.error ?? 'El procesamiento falló');
+      setJobId(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [proceso.estado, jobId]);
+
+  // Log de diagnóstico: se alimenta de la etapa reportada por el back.
+  useEffect(() => {
+    if (!jobId || !proceso.stage) return;
+    setLog((l) => [{ text: etiquetaDeStage(proceso.stage!), type: 'progress' }, ...l]);
+  }, [proceso.stage, jobId]);
 
   // Al abrir la app: si no hay nada cargado localmente, traemos el último comprobante
   // PROCESADO del usuario y lo dejamos listo para aprobar/rechazar.
@@ -178,41 +210,20 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
     setErrorMsg(null);
     setSuccessMsg(null);
     setLog([]);
-    setPct(2);
     setRemitosCargados([]);
     setOriginalRemitos([]);
     setRemitoSel(null);
     try {
       if (!file) throw new Error('No hay archivo PDF seleccionado');
-      const { jobId } = await createFactura(file, sucursalId, proveedorId);
-      setLog((l) => [{ text: `Encolado · job ${jobId}`, type: 'sent' }, ...l]);
+      const { jobId: nuevoJobId } = await createFactura(file, sucursalId, proveedorId);
+      setLog((l) => [{ text: `Encolado · job ${nuevoJobId}`, type: 'sent' }, ...l]);
       setStatus('processing');
-      const close = subscribeFacturaEvents(
-        jobId,
-        (ev) => handleEvent(ev, jobId),
-        () => setLog((l) => [{ text: 'Conexión interrumpida, reintentando…', type: 'reconnect' }, ...l]),
-      );
-      closeSseRef.current = close;
+      // No se abre ninguna conexión: el stream ya está vivo desde el login.
+      // Declarar el processId alcanza para que useProceso empiece a filtrarlo.
+      setJobId(nuevoJobId);
     } catch (e) {
       setStatus('error');
       setErrorMsg(e instanceof Error ? e.message : 'No se pudo enviar el archivo');
-    }
-  }
-
-  function handleEvent(ev: JobEventDto, jobId: string) {
-    const p = percentOf(ev);
-    if (p != null) setPct(p);
-    setLog((l) => [{ text: labelOf(ev), type: ev.type }, ...l]);
-
-    if (ev.type === 'completed') {
-      closeSseRef.current?.();
-      setPct(100);
-      setStatus('done');
-      loadRemitosByJob(jobId);
-    } else if (ev.type === 'failed') {
-      closeSseRef.current?.();
-      setStatus('error');
-      setErrorMsg(typeof ev.data === 'string' ? ev.data : 'El procesamiento falló');
     }
   }
 
@@ -334,12 +345,23 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
     setErrorMsg(null);
     try {
       const results = await Promise.allSettled(remitosCargados.map((r) => remitosApi.discard(r.id)));
-      const failed = remitosCargados.filter((_, i) => results[i].status === 'rejected');
-      const failedIds = new Set(failed.map((r) => r.id));
-      // Conservamos solo los que fallaron (y sus snapshots) para poder reintentar.
-      setRemitosCargados(failed);
-      setOriginalRemitos((prev) => prev.filter((r) => failedIds.has(r.id)));
-      if (failed.length === 0) {
+
+      // Un 404 NO es un fallo a reintentar: significa que el remito ya no existe
+      // en el backend (lo descartó otro usuario, o quedó una referencia vieja en
+      // localStorage). Conservarlo localmente lo volvería basura imborrable: el
+      // botón fallaría para siempre y la pantalla quedaría trabada. Borrarlo del
+      // estado local ES la reconciliación correcta.
+      const fallidos = remitosCargados.filter((_, i) => {
+        const r = results[i];
+        if (r.status === 'fulfilled') return false;
+        if (r.reason instanceof ApiError && r.reason.status === 404) return false;
+        return true;
+      });
+      const idsFallidos = new Set(fallidos.map((r) => r.id));
+      // Conservamos solo los que fallaron de verdad (y sus snapshots) para reintentar.
+      setRemitosCargados(fallidos);
+      setOriginalRemitos((prev) => prev.filter((r) => idsFallidos.has(r.id)));
+      if (fallidos.length === 0) {
         setRemitoSel(null);
         setStatus('idle');
         setFile(null);
@@ -866,37 +888,19 @@ function EditableCell({ value, rawValue, editing, onStartEdit, onChange, onCommi
   );
 }
 
-function percentOf(ev: JobEventDto): number | null {
-  if (ev.type === 'completed') return 100;
-  if (ev.type === 'active') return 5;
-  if (ev.type === 'waiting') return 2;
-  if (ev.type === 'progress') {
-    const d = ev.data;
-    if (typeof d === 'number') return d;
-    if (d && typeof d === 'object' && 'progress' in d) return Number((d as { progress: unknown }).progress) || 0;
-  }
-  return null;
-}
+// La etiqueta sale de la etapa reportada por el back, que es información real,
+// y no de un porcentaje inventado. Cuando se sume `orden_compra` como segunda
+// etapa del pipeline, alcanza con agregarla a este Record — TypeScript exige
+// que estén todas.
+const ETIQUETA_POR_STAGE: Record<ProcesoStage, string> = {
+  ocr: 'Leyendo el PDF…',
+  llm: 'Extrayendo datos con IA…',
+  persistencia: 'Guardando remitos…',
+  orden_compra: 'Generando orden de compra…',
+};
 
-function labelOf(ev: JobEventDto): string {
-  switch (ev.type) {
-    case 'waiting':
-      return 'En cola…';
-    case 'active':
-      return 'Job activo, iniciando procesamiento';
-    case 'progress': {
-      const d = ev.data;
-      const p = typeof d === 'number' ? d : d && typeof d === 'object' && 'progress' in d ? (d as { progress: unknown }).progress : '';
-      const step = d && typeof d === 'object' && 'step' in d ? ' · ' + (d as { step: unknown }).step : '';
-      return `Progreso ${p ?? ''}%${step}`;
-    }
-    case 'completed':
-      return 'Procesamiento completado ✓';
-    case 'failed':
-      return `Falló: ${typeof ev.data === 'string' ? ev.data : 'error desconocido'}`;
-    default:
-      return ev.type;
-  }
+function etiquetaDeStage(stage: ProcesoStage): string {
+  return ETIQUETA_POR_STAGE[stage] ?? stage;
 }
 
 const cardStyle: CSSProperties = {
