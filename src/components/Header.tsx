@@ -1,4 +1,5 @@
 import { useState, type CSSProperties, type ReactNode } from 'react';
+import { EstadoConexionSse } from './EstadoConexionSse';
 
 interface Props {
   userLabel: string;
@@ -25,6 +26,8 @@ export function Header({ userLabel, empresaLabel, onLogout, left }: Props) {
       }}
     >
       <div style={{ flex: 1, minWidth: 0 }}>{left}</div>
+      {/* Sólo aparece cuando el stream NO está conectado. Ver EstadoConexionSse. */}
+      <EstadoConexionSse />
       <div style={{ position: 'relative', flex: 'none' }}>
         <button
           onClick={() => setOpen((o) => !o)}

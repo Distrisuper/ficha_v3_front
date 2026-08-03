@@ -9,7 +9,8 @@ import { ApiError } from '../api/client';
 import { STAGES_EXTRACCION, useProceso } from '../hooks/useProceso';
 import type { ProcesoStage } from '../types/events';
 import type { Articulo, Remito, RemitoTipo } from '../types/api';
-import { money, parseMoneyInput } from '../utils/money';
+import { money } from '../utils/money';
+import { round2, toNumero } from '../utils/numero';
 import { colorFor } from '../utils/colors';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useLocalStorage } from '../hooks/useLocalStorage';
@@ -35,24 +36,12 @@ function loadStored(key: string): Remito[] {
   }
 }
 
-// La cantidad puede venir como número o string (col char36 del back). Aceptamos coma decimal.
-function toCantidad(v: number | string): number {
-  if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
-  const n = parseFloat(String(v).replace(',', '.'));
-  return Number.isNaN(n) ? 0 : n;
-}
-
-// El precio llega como número desde el back ("1234.56") pero al editarse queda como string.
-// Con coma => formato es-AR (puntos de miles, coma decimal); sin coma => punto decimal.
-function toPrecio(v: number | string): number {
-  if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
-  const s = String(v).trim();
-  if (!s) return 0;
-  const n = s.includes(',') ? parseMoneyInput(s) : parseFloat(s);
-  return Number.isNaN(n) ? 0 : n;
-}
-
-const round2 = (n: number): number => Math.round((n + Number.EPSILON) * 100) / 100;
+// `toCantidad`/`toPrecio` locales se reemplazaron por `toNumero` de utils/numero.ts.
+// Eran dos de los tres parseos distintos que existían para los mismos campos: el
+// mismo artículo mostraba 1,5 acá, contaba como 0 en Pendientes y se desplegaba como
+// "1" en el formateo.
+const toCantidad = toNumero;
+const toPrecio = toNumero;
 
 // Recalcula el total por artículo (cantidad × precio), el subtotal (Σ totales) y el total
 // del remito. El IVA se recalcula proporcional a la alícuota efectiva original (iva/subtotal
@@ -321,11 +310,27 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
     setApproving(true);
     setErrorMsg(null);
     try {
-      // Si hubo ediciones, mandamos el objeto completo del remito para que el back
-      // verifique/persista los cambios antes de aprobar.
+      // Sólo los campos editables de la cabecera, no el remito completo.
+      //
+      // Antes se mandaba el objeto entero (`remitosApi.update(r.id, r)`), lo que
+      // significaba enviar `id`, `estado`, `total`, `companyId` y los flags en cada
+      // edición. El back los aceptaba con un `Object.assign`: mandar el `id` de un
+      // remito de otra empresa sobrescribía esa fila. Ahora el back rechaza con 400
+      // cualquier campo no editable, así que mandar de más sería un error.
+      //
+      // Los montos NO van acá: se derivan de los artículos vía
+      // `PATCH /remitos/:id/items`.
       const editados = scope.filter(isDirty);
       if (editados.length) {
-        await Promise.all(editados.map((r) => remitosApi.update(r.id, r)));
+        await Promise.all(
+          editados.map((r) =>
+            remitosApi.update(r.id, {
+              remitoNro: r.remitoNro,
+              facturaNro: r.facturaNro,
+              fecha: r.fecha,
+            }),
+          ),
+        );
       }
       await Promise.all(scope.map((r) => approveFactura(r.id)));
       setSuccessMsg('Comprobante(s) aprobado(s) correctamente.');

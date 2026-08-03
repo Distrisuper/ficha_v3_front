@@ -5,6 +5,7 @@ import { DataProvider } from './context/DataContext';
 import { useData } from './context/data-context';
 import { SseProvider } from './context/SseContext';
 import { Login } from './components/Login';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { Sidebar, type TabKey } from './components/Sidebar';
 import { Header } from './components/Header';
 import { FiltersBar } from './components/FiltersBar';
@@ -42,10 +43,35 @@ function Shell() {
           <Header userLabel={userLabel} empresaLabel={empresa?.nombre} onLogout={logout} left={headerLeft} />
         )}
         <div className="ds-scroll" style={{ flex: 1, overflow: 'auto', padding: '26px 30px' }}>
-          {tab === 'nuevo' && <NuevoPage tipoComp={tipoComp} onGoConfig={() => setTab('config')} />}
-          {tab === 'pendientes' && <PendientesPage filters={filters} />}
-          {tab === 'historial' && <HistorialPage filters={filters} />}
-          {tab === 'config' && <ConfiguracionPage />}
+          {/*
+            Una frontera POR PANTALLA, no una sola global: un throw en render
+            desmonta todo el árbol, y sin router el usuario quedaría en una página
+            en blanco sin forma de navegar. Acotándola por pestaña, un fallo en
+            Pendientes deja la navegación y el resto de las pantallas usables.
+
+            El `key` fuerza una instancia nueva por pestaña, así el estado de error
+            no sobrevive al cambio de pantalla.
+          */}
+          {tab === 'nuevo' && (
+            <ErrorBoundary key="nuevo" scope="Nuevo">
+              <NuevoPage tipoComp={tipoComp} onGoConfig={() => setTab('config')} />
+            </ErrorBoundary>
+          )}
+          {tab === 'pendientes' && (
+            <ErrorBoundary key="pendientes" scope="Pendientes">
+              <PendientesPage filters={filters} />
+            </ErrorBoundary>
+          )}
+          {tab === 'historial' && (
+            <ErrorBoundary key="historial" scope="Historial">
+              <HistorialPage filters={filters} />
+            </ErrorBoundary>
+          )}
+          {tab === 'config' && (
+            <ErrorBoundary key="config" scope="Configuración">
+              <ConfiguracionPage />
+            </ErrorBoundary>
+          )}
         </div>
       </main>
     </div>

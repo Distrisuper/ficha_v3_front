@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type CSSProperties, type Rea
 import { useData } from '../context/data-context';
 import { remitosApi } from '../api/remitos';
 import { money, fmtDate } from '../utils/money';
+import { toNumero } from '../utils/numero';
 import { HISTORIAL_ESTADOS, historialEstadoView } from '../utils/estados';
 import { applyFilters, type RemitoFilters } from '../utils/filtros';
 import { downloadCsv } from '../utils/csv';
@@ -14,11 +15,12 @@ interface Props {
 const PAGE_SIZE = 20;
 
 // "Artículos" = cantidad de renglones distintos (p. ej. pastillas + amortiguador = 2).
-// "Items" = suma de las cantidades de esos renglones (x3 + x2 = 5). cantidad puede
-// venir como string desde el back, por eso Number().
+// "Items" = suma de las cantidades de esos renglones (x3 + x2 = 5). `cantidad` puede
+// venir como string desde el back, por eso el parseo compartido.
 const totalArts = (r: Remito) => r.articulos?.length ?? 0;
 const totalItems = (r: Remito) =>
-  r.articulos?.reduce((acc, a) => acc + (Number(a.cantidad) || 0), 0) ?? 0;
+  // toNumero: `Number('1,5')` da NaN y el `|| 0` lo volvía 0.
+  r.articulos?.reduce((acc, a) => acc + toNumero(a.cantidad), 0) ?? 0;
 
 export function HistorialPage({ filters }: Props) {
   const { proveedores, sucursales, sucursalId } = useData();

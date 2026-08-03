@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useData } from '../context/data-context';
 import { remitosApi } from '../api/remitos';
 import { money, fmtDate, fmtCantidad } from '../utils/money';
+import { toNumero } from '../utils/numero';
 import { PENDIENTES_ESTADOS } from '../utils/estados';
 import { applyFilters, type RemitoFilters } from '../utils/filtros';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -82,7 +83,10 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
   const totalUnidades = (r: Remito, sel?: Set<string>) =>
     (r.articulos ?? [])
       .filter((a) => !sel || sel.has(a.id))
-      .reduce((acc, a) => acc + (Number(a.cantidad) || 0), 0);
+      // toNumero y no `Number(...) || 0`: con `cantidad: '1,5'` (la columna llega
+      // como string según el driver) Number() da NaN y el `|| 0` lo convertía en 0,
+      // así que un artículo de 1,5 unidades no contaba.
+      .reduce((acc, a) => acc + toNumero(a.cantidad), 0);
 
   // Total de la factura: usa el del back si viene, sino lo reconstruye desde los ítems.
   const totalFacturaOf = (r: Remito) => {

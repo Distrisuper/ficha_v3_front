@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { login as apiLogin, logout as apiLogout, currentAuth } from '../api/auth';
 import { usersApi } from '../api/users';
-import { ApiError } from '../api/client';
+import { ApiError, setUnauthorizedHandler } from '../api/client';
 import type { AuthPayload, Empresa } from '../types/api';
 import { AuthContext, type AuthContextValue } from './auth-context';
 
@@ -10,6 +10,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [empresa, setEmpresa] = useState<Empresa | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Un 401 en CUALQUIER request cierra la sesión. Es el único lugar del front que
+  // sabe cómo bajar el estado de auth, y `request()` no puede usar hooks: de ahí el
+  // registro de un handler en vez de un import directo.
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      setAuth(null);
+      setEmpresa(null);
+      setError('Tu sesión expiró. Volvé a iniciar sesión.');
+    });
+    return () => setUnauthorizedHandler(null);
+  }, []);
 
   // La empresa no viaja en el token (es mutable y el JWT vive días), así que se
   // pide por GET /users/me cada vez que hay sesión: al montar con un token ya
@@ -27,9 +39,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
       .catch((e) => {
         if (cancelled) return;
-        // 401: el token expiró o la empresa se desactivó. client.ts ya borró el
-        // token, así que sólo hay que bajar el estado para volver al Login.
-        if (e instanceof ApiError && e.status === 401) setAuth(null);
+        // El 401 ya lo maneja el handler global de arriba. Acá sólo importa que un
+        // fallo distinto (500, red) no deje `empresa` en null para siempre y sin
+        // ninguna señal: el nombre de la empresa desaparecía del header sin
+        // explicación.
+        if (e instanceof ApiError && e.status === 401) return;
+        setError('No se pudieron cargar los datos de la empresa.');
       });
     return () => {
       cancelled = true;
