@@ -4,8 +4,9 @@ import { useAuth } from '../context/auth-context';
 import { permsFor } from '../utils/roles';
 import { createFactura } from '../api/facturas';
 import { remitosApi } from '../api/remitos';
+import { approveFactura } from '../api/facturas';
 import { ApiError } from '../api/client';
-import { useProceso } from '../hooks/useProceso';
+import { STAGES_EXTRACCION, useProceso } from '../hooks/useProceso';
 import type { ProcesoStage } from '../types/events';
 import type { Articulo, Remito, RemitoTipo } from '../types/api';
 import { money, parseMoneyInput } from '../utils/money';
@@ -88,7 +89,9 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
   // Proceso que esta pantalla está mirando. El stream ya está abierto a nivel
   // sesión: acá sólo se declara "me interesa este processId".
   const [jobId, setJobId] = useState<string | null>(null);
-  const proceso = useProceso(jobId);
+  // Sólo las etapas de extracción: la validación contra la orden de compra usa el
+  // mismo processId (el jobId) y sus eventos no deben mover esta barra.
+  const proceso = useProceso(jobId, STAGES_EXTRACCION);
   const pct = status === 'uploading' ? 2 : proceso.pct;
 
   const [remitosCargados, setRemitosCargados] = useState<Remito[]>(() => loadStored(STORAGE_KEY));
@@ -324,7 +327,7 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
       if (editados.length) {
         await Promise.all(editados.map((r) => remitosApi.update(r.id, r)));
       }
-      await Promise.all(scope.map((r) => remitosApi.approve(r.id)));
+      await Promise.all(scope.map((r) => approveFactura(r.id)));
       setSuccessMsg('Comprobante(s) aprobado(s) correctamente.');
       setRemitosCargados([]);
       setOriginalRemitos([]);

@@ -5,7 +5,9 @@ import { money, fmtDate, fmtCantidad } from '../utils/money';
 import { PENDIENTES_ESTADOS } from '../utils/estados';
 import { applyFilters, type RemitoFilters } from '../utils/filtros';
 import { ConfirmDialog } from '../components/ConfirmDialog';
-import type { Remito } from '../types/api';
+import { BadgeOrdenCompra, IconosMatch, Spinner } from '../components/OrdenCompra';
+import { useOrdenCompra } from '../hooks/useOrdenCompra';
+import type { Articulo, Remito } from '../types/api';
 
 type ConfirmAction = { type: 'factura' | 'stock'; remito: Remito };
 
@@ -18,11 +20,16 @@ interface Props {
 }
 
 export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
-  const { remitos, remitosLoading, remitosError, reloadRemitos, removeRemitoLocal, patchRemitoLocal, proveedores, sucursales, sucursalId } = useData();
+  const { remitos, remitosLoading, remitosError, refreshRemito, removeRemitoLocal, patchRemitoLocal, proveedores, sucursales, sucursalId } = useData();
   const pendientes = useMemo(
     () => applyFilters(remitos.filter((r) => PENDIENTES_ESTADOS.has(r.estado)), filters),
     [remitos, filters],
   );
+  // Estado de la validación contra la orden de compra, por jobId. Un solo juego
+  // de suscripciones al stream para toda la pantalla (no se puede llamar un hook
+  // por fila, y tampoco haría falta: el stream es uno).
+  const { estados: ordenCompraPorJob, marcarEnProceso } = useOrdenCompra();
+
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   // Modal de confirmación antes de cargar factura / stock.
@@ -159,9 +166,20 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
     try {
       setBusyId(r.id);
       setNotice(null);
+      // El spinner arranca ACÁ, no cuando llega `proceso.encolado`.
+      //
+      // Esta acción dispara la validación contra la orden de compra, así que el
+      // front ya sabe que hay algo en curso: esperar la confirmación del servidor
+      // para mostrarlo hacía que el indicador dependiera de que un evento llegue
+      // dentro de una ventana de ~150ms. Los eventos siguen apagándolo y siguen
+      // siendo la única fuente del estado de fallo.
+      if (r.jobId) marcarEnProceso(r.jobId);
       await remitosApi.submitFactura(r.id);
       setNotice(`Remito ${r.remitoNro || r.id.slice(0, 8)}: factura cargada correctamente.`);
-      await reloadRemitos();
+      // Sólo esta card, no la lista entera: reloadRemitos() reemplazaba el array
+      // completo y hacía perder el scroll justo cuando empiezan a llegar los
+      // eventos de la orden de compra.
+      await refreshRemito(r.id);
     } catch (e) {
       setNotice(e instanceof Error ? `Error: ${e.message}` : 'No se pudo cargar la factura');
     } finally {
@@ -187,13 +205,30 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
           {remitosError}
         </div>
       )}
-      {remitosLoading && <div style={{ fontSize: 13, color: 'var(--muted-3)' }}>Cargando remitos…</div>}
+      {/* Sólo en la carga inicial. Si se muestra durante un refetch con datos ya en
+          pantalla, la lista se desmonta, la página colapsa a casi 0 de alto y el
+          navegador manda el scroll arriba de todo. */}
+      {remitosLoading && pendientes.length === 0 && (
+        <div style={{ fontSize: 13, color: 'var(--muted-3)' }}>Cargando remitos…</div>
+      )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 1100 }}>
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 18,
+          maxWidth: 1100,
+          // Durante un refetch la lista SIGUE MONTADA (no hay `!remitosLoading &&`
+          // en el map): se atenúa apenas para dar feedback sin perder el scroll ni
+          // desmontar las cards.
+          opacity: remitosLoading && pendientes.length > 0 ? 0.6 : 1,
+          transition: 'opacity .15s ease',
+        }}
+      >
         {!remitosLoading && pendientes.length === 0 && (
           <div style={{ fontSize: 13, color: 'var(--muted-3)', padding: '20px 0' }}>No hay remitos pendientes.</div>
         )}
-        {!remitosLoading && pendientes.map((r) => {
+        {pendientes.map((r) => {
           const editing = editingIds.has(r.id);
           const items = r.articulos ?? [];
           const selected = getSelected(r);
@@ -213,6 +248,9 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
           const percepciones = Number(r.percepciones || 0);
           const descuentos = Number(r.descuentos || 0);
           const totalFactura = Number(r.total) > 0 ? Number(r.total) : subtotal - descuentos + percepciones + iva;
+          // El flujo de orden de compra publica su progreso con processId = jobId.
+          const estadoOc = r.jobId ? ordenCompraPorJob[r.jobId] : undefined;
+          const ocProcesando = estadoOc === 'procesando';
           return (
             <div
               key={r.id}
@@ -250,6 +288,7 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                   <HeadCell label="PROVEEDOR" value={provName(r)} />
                   {mostrarSucursal && <HeadCell label="SUCURSAL" value={sucName(r)} />}
                   <HeadCell label="ESTADO" value={r.facturaCargada === true ? 'Factura cargada' : 'Remito Cargado'} />
+                  {estadoOc && <BadgeOrdenCompra estado={estadoOc} />}
                 </div>
                 <span style={{ fontSize: 13, color: 'var(--muted-2)', fontWeight: 600 }}>{fmtDate(r.fecha)}</span>
               </div>
@@ -263,6 +302,11 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" style={{ transform: showItems ? 'rotate(90deg)' : 'none', transition: 'transform .15s ease', flex: 'none' }}>
                       <path d="M9 6l6 6-6 6" />
                     </svg>
+                    {/* Con los artículos colapsados no se ven los indicadores, así
+                        que el resumen va acá para no tener que expandir la card. */}
+                    {!showItems && items.length > 0 && (
+                      <ResumenMatch items={items} procesando={ocProcesando} />
+                    )}
                     {editing && (
                       <input
                         type="checkbox"
@@ -326,8 +370,40 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                             ) : null}
                           </div>
                         </div>
-                        <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--navy)', background: 'var(--blue-weak)', borderRadius: 6, padding: '2px 10px', flex: 'none' }}>
-                          {fmtCantidad(it.cantidad)}
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 'none' }}>
+                          {/*
+                            Amarillo mientras se consulta la orden de compra, después
+                            verde o rojo según el flag. Los dos van juntos porque
+                            mientras la consulta está en vuelo NINGUNO de los dos
+                            flags es confiable.
+                          */}
+                          <IconosMatch
+                            estado={ocProcesando ? 'procesando' : 'resuelto'}
+                            precioMatch={it.precioMatch}
+                            stockMatch={it.stockMatch}
+                          />
+                          {/*
+                            minWidth fijo + tabular-nums: sin esto el ancho del
+                            badge depende del número (165 vs 5) y los iconos de la
+                            izquierda quedaban en una columna distinta en cada fila.
+                            Los dígitos tabulares además evitan que "111" y "999"
+                            midan diferente.
+                          */}
+                          <span
+                            style={{
+                              fontSize: 14,
+                              fontWeight: 700,
+                              color: 'var(--navy)',
+                              background: 'var(--blue-weak)',
+                              borderRadius: 6,
+                              padding: '2px 10px',
+                              minWidth: 58,
+                              textAlign: 'center',
+                              fontVariantNumeric: 'tabular-nums',
+                            }}
+                          >
+                            {fmtCantidad(it.cantidad)}
+                          </span>
                         </span>
                       </div>
                     );
@@ -440,6 +516,54 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
         );
       })()}
     </div>
+  );
+}
+
+/**
+ * Contador de artículos observados, para verlo con la card colapsada.
+ *
+ * "Observado" = no coincide en cantidad, o no coincide en precio, o no figura en
+ * la orden de compra. Los tres casos son indistinguibles con los flags actuales
+ * (ver la nota del tercer estado en types/api.ts).
+ */
+function ResumenMatch({ items, procesando }: { items: Articulo[]; procesando: boolean }) {
+  if (procesando) {
+    return (
+      <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--warn)', fontWeight: 700, letterSpacing: 0 }}>
+        <Spinner size={11} />
+        verificando OC
+      </span>
+    );
+  }
+
+  // Sin verificar (null) NO cuenta como observado: contarlo sería reportar un
+  // problema que nadie comprobó. Sólo el `false` explícito es una diferencia real.
+  const sinVerificar = items.every((it) => it.precioMatch == null && it.stockMatch == null);
+  if (sinVerificar) {
+    return (
+      <span
+        title="Orden de compra pendiente de verificar. Se controla al cargar la factura."
+        style={{ color: 'var(--warn)', fontWeight: 700, letterSpacing: 0, cursor: 'help' }}
+      >
+        OC Pend.
+      </span>
+    );
+  }
+
+  const observados = items.filter((it) => it.precioMatch === false || it.stockMatch === false).length;
+  const ok = observados === 0;
+
+  return (
+    <span
+      title={
+        ok
+          ? 'Todos los artículos coinciden con la orden de compra'
+          : `${observados} de ${items.length} artículo(s) no coinciden con la orden de compra`
+      }
+      style={{ color: ok ? 'var(--ok)' : 'var(--err)', fontWeight: 700, letterSpacing: 0, cursor: 'help' }}
+    >
+      {ok ? '✓ OC OK' : `${observados} obs.`}
+    </span>
   );
 }
 

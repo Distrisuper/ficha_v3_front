@@ -16,6 +16,9 @@ export interface VistaProceso {
 
 export const PROCESO_INICIAL: VistaProceso = { estado: 'inactivo', pct: 0 };
 
+/** Etapas del pipeline de extracción. NO incluye `orden_compra`, que es otro flujo. */
+export const STAGES_EXTRACCION: ProcesoStage[] = ['ocr', 'llm', 'persistencia'];
+
 /**
  * Porcentaje por etapa.
  *
@@ -79,9 +82,24 @@ export function reducirProceso(prev: VistaProceso, evento: DomainEvent): VistaPr
  * filtrado por `processId` es responsabilidad del consumidor. Eso es lo que
  * permite que una sola conexión sirva a N pantallas siguiendo N procesos.
  */
-export function useProceso(processId: string | null): VistaProceso {
+/**
+ * @param stages etapas que le interesan a este consumidor. **Filtrar por etapa no
+ *        es opcional en la práctica**: el flujo de orden de compra publica con el
+ *        MISMO `processId` (el jobId) y los mismos tipos de evento que el pipeline
+ *        de extracción. Sin esta lista, un `proceso.fallido` de la validación de
+ *        orden de compra marcaría la extracción como fallida, aunque el LLM
+ *        hubiera terminado bien horas antes.
+ *
+ *        Los eventos sin `stage` (el `proceso.encolado` de la subida, el
+ *        `proceso.completado` del LLM) siempre pasan: son del proceso base.
+ */
+export function useProceso(processId: string | null, stages?: ProcesoStage[]): VistaProceso {
   const { subscribe, ultimoEvento } = useSse();
   const [vista, setVista] = useState<VistaProceso>(PROCESO_INICIAL);
+
+  // Se serializa para que el array literal del caller no reinicie el effect en
+  // cada render.
+  const clave = stages?.join(',') ?? '';
 
   useEffect(() => {
     if (!processId) {
@@ -89,22 +107,24 @@ export function useProceso(processId: string | null): VistaProceso {
       return;
     }
 
+    const permitidas = clave ? (clave.split(',') as ProcesoStage[]) : null;
+    const aplica = (evento: DomainEvent) =>
+      evento.processId === processId &&
+      (!permitidas || !evento.stage || permitidas.includes(evento.stage));
+
     // Arranque desde lo último que se vio de este proceso, si ya pasó algo.
     // El back publica `proceso.encolado` antes de responder el POST, así que
     // siempre hay al menos un evento perdido; y si el proceso fuese muy rápido
     // podría estar perdido hasta el `proceso.completado`.
     const previo = ultimoEvento(processId);
-    setVista(
-      previo
-        ? reducirProceso({ estado: 'en_curso', pct: 5 }, previo)
-        : { estado: 'en_curso', pct: 5 },
-    );
+    const inicial: VistaProceso = { estado: 'en_curso', pct: 5 };
+    setVista(previo && aplica(previo) ? reducirProceso(inicial, previo) : inicial);
 
     return subscribe('*', (evento) => {
-      if (evento.processId !== processId) return;
+      if (!aplica(evento)) return;
       setVista((prev) => reducirProceso(prev, evento));
     });
-  }, [processId, subscribe, ultimoEvento]);
+  }, [processId, clave, subscribe, ultimoEvento]);
 
   return vista;
 }

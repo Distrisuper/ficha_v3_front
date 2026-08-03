@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { proveedoresApi } from '../api/proveedores';
 import { sucursalesApi } from '../api/sucursales';
-import { listRemitos } from '../api/remitos';
+import { listRemitos, remitosApi } from '../api/remitos';
+import { ApiError } from '../api/client';
 import type { Proveedor, Remito, Sucursal, UUID } from '../types/api';
-import type { RemitoListoPayload } from '../types/events';
+import type {
+  DomainEvent,
+  OrdenCompraValidadaPayload,
+  RemitoListoPayload,
+} from '../types/events';
 import { EMPTY_FILTERS, type RemitoFilters } from '../utils/filtros';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { DataContext, type DataContextValue } from './data-context';
@@ -81,41 +86,114 @@ export function DataProvider({ children }: { children: ReactNode }) {
   // datos.
   const { subscribe } = useSse();
 
+  /**
+   * Trae un solo remito y lo mergea en la lista, sin reemplazarla.
+   *
+   * Se declara ACÁ, arriba de los refs que lo capturan: como es un `const`, usarlo
+   * antes de su declaración es TDZ — `ReferenceError` en el primer render, no un
+   * warning.
+   *
+   * Sólo se parchean los campos que el evento pudo cambiar (`articulos`, `estado`,
+   * `facturaCargada`) y no el remito completo: `GET /remitos/:id` no incluye las
+   * relaciones `proveedor`/`sucursal` que sí trae el listado, así que un reemplazo
+   * total borraría los nombres de la card.
+   */
+  const refreshRemito = useCallback(async (id: string) => {
+    let fresco: Remito | null;
+    try {
+      fresco = await remitosApi.get(id as UUID);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) {
+        // Ya no existe (lo descartó otro usuario): sacarlo en vez de dejar una
+        // card fantasma que va a fallar en cada acción.
+        setRemitos((prev) => prev.filter((r) => r.id !== id));
+        return;
+      }
+      // Best-effort: la card queda con los datos viejos hasta el próximo refresh.
+      // No se toca remitosError para no pintar un error global por el refresco
+      // puntual de una sola fila.
+      return;
+    }
+    if (!fresco) return;
+    const remito = fresco;
+
+    // GET /remitos/:id devuelve TODOS los artículos; el listado de pendientes usa
+    // un innerJoin con `stock_cargado = false`. Sin este filtro, un refresco haría
+    // reaparecer artículos ya enviados a stock — deshaciendo lo que
+    // handleCargarStock acababa de sacar de la card.
+    //
+    // Replicar acá un filtro del servidor es deuda: lo correcto sería que el
+    // detalle tuviera la misma proyección que el listado.
+    const articulosPendientes = (remito.articulos ?? []).filter((a) => a.stockCargado !== true);
+
+    setRemitos((prev) =>
+      prev.map((r) =>
+        r.id === id
+          ? {
+              ...r,
+              articulos: articulosPendientes,
+              estado: remito.estado,
+              facturaCargada: remito.facturaCargada,
+            }
+          : r,
+      ),
+    );
+  }, []);
+
   // reloadRemitos cambia de identidad con cada filtro; en un ref la suscripción
   // no se rearma en cada tipeo del usuario.
   const reloadRef = useRef(reloadRemitos);
   reloadRef.current = reloadRemitos;
+  const refreshRef = useRef(refreshRemito);
+  refreshRef.current = refreshRemito;
   const sucursalRef = useRef(sucursalId);
   sucursalRef.current = sucursalId;
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const desuscribir = subscribe('remito.listo_para_stock', (evento) => {
-      const payload = evento.payload as RemitoListoPayload | undefined;
-
-      // Filtrado por sucursal del lado del cliente, a propósito: hoy no existe
-      // relación usuario↔sucursal en el back, así que la sucursal no es una
-      // frontera de permisos sino la vista que este usuario eligió. Sin sucursal
-      // seleccionada se ven todas.
+    /**
+     * Filtrado por sucursal del lado del cliente, a propósito: hoy no existe
+     * relación usuario↔sucursal en el back, así que la sucursal no es una frontera
+     * de permisos sino la vista que este usuario eligió. Sin sucursal seleccionada
+     * se ven todas.
+     */
+    const esDeMiVista = (payload?: { sucursalId?: string | null }) => {
       const seleccionada = sucursalRef.current;
-      if (seleccionada && payload?.sucursalId && payload.sucursalId !== seleccionada) {
-        return;
-      }
+      return !seleccionada || !payload?.sucursalId || payload.sucursalId === seleccionada;
+    };
 
-      // Un PDF puede generar N remitos y handleProcesar los aprueba en paralelo,
-      // así que llegan N eventos casi simultáneos. Sin agrupar, cada cliente
-      // conectado dispararía N veces GET /remitos para terminar en el mismo
-      // estado.
-      //
-      // Agrupar es gratis justamente porque el evento no transporta datos: es una
-      // señal de invalidación, y descartar las intermedias no pierde información.
-      // Si el evento trajera el remito, no se podría.
+    // --- Remito NUEVO en la lista: no hay nada que parchear, hay que traerlo ---
+    //
+    // Un PDF puede generar N remitos y handleProcesar los aprueba en paralelo, así
+    // que llegan N eventos casi simultáneos. Sin agrupar, cada cliente conectado
+    // dispararía N veces GET /remitos para terminar en el mismo estado.
+    const alta = (evento: DomainEvent) => {
+      if (!esDeMiVista(evento.payload as RemitoListoPayload | undefined)) return;
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(() => void reloadRef.current(), REFETCH_DEBOUNCE_MS);
-    });
+    };
+
+    // --- Remito YA en la lista: se refresca sólo esa card ---
+    //
+    // `reloadRemitos()` acá era el bug: reemplaza el array entero, re-renderiza
+    // todas las cards y, mientras dura el fetch, PendientesPage desmontaba la
+    // lista — el navegador perdía el scroll y saltaba arriba de todo.
+    //
+    // Cada evento trae su `remitoId`, así que se refresca uno por uno. No hace
+    // falta debounce: son requests independientes a filas distintas.
+    const cambio = (evento: DomainEvent) => {
+      const payload = evento.payload as OrdenCompraValidadaPayload | undefined;
+      if (!payload?.remitoId || !esDeMiVista(payload)) return;
+      void refreshRef.current(payload.remitoId);
+    };
+
+    const desuscribir = [
+      subscribe('remito.listo_para_stock', alta),
+      subscribe('orden_compra.validada', cambio),
+    ];
 
     return () => {
-      desuscribir();
+      desuscribir.forEach((fn) => fn());
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [subscribe]);
@@ -162,6 +240,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       remitosLoading,
       remitosError,
       reloadRemitos,
+      refreshRemito,
       removeRemitoLocal,
       patchRemitoLocal,
     }),
@@ -180,6 +259,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       remitosLoading,
       remitosError,
       reloadRemitos,
+      refreshRemito,
       removeRemitoLocal,
       patchRemitoLocal,
     ],

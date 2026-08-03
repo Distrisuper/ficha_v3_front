@@ -16,9 +16,23 @@ export type DomainEventType =
   | 'proceso.fallido'
   // Hechos del negocio, canal de empresa. Estos SÍ llegan a todos los usuarios
   // del tenant y el filtrado por sucursal es responsabilidad del cliente.
-  | 'remito.listo_para_stock';
+  | 'remito.listo_para_stock'
+  | 'orden_compra.validada';
 
 export type Audiencia = 'usuario' | 'empresa';
+
+/**
+ * Payload de `orden_compra.validada`.
+ *
+ * Trae contadores y no los artículos: el evento es una señal de invalidación de
+ * cache. Los flags reales (stockMatch / precioMatch) se leen de la API.
+ */
+export interface OrdenCompraValidadaPayload {
+  remitoId: UUID;
+  sucursalId: UUID | null;
+  autorizados: number;
+  observados: number;
+}
 
 /** Payload de `remito.listo_para_stock`. */
 export interface RemitoListoPayload {

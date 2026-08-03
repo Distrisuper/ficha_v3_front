@@ -45,6 +45,20 @@ export interface Articulo {
   codigo: string;
   cantidad: number | string; // el backend persiste esta columna como char(36): puede llegar como string
   stockCargado: boolean; // true = ítem ya cargado a stock (define "items procesados" en el historial)
+  /**
+   * Resultado del cruce contra la orden de compra del proveedor (OrderProcessor).
+   *
+   * Tres estados, y el tercero importa:
+   *   true  → coincide
+   *   false → no coincide (o el artículo no figura en la orden)
+   *   null  → todavía no se verificó
+   *
+   * Mientras las columnas sigan siendo `NOT NULL DEFAULT false`, `null` no llega
+   * nunca y un artículo sin verificar se ve igual que uno que no coincidió. El
+   * front ya distingue los tres casos, así que la migración es sólo de DB.
+   */
+  stockMatch: boolean | null; // la cantidad coincide con la orden de compra
+  precioMatch: boolean | null; // el precio unitario coincide con la orden de compra
   precio_unitario: number;
   total_unitario: number;
   remitoId: UUID;
