@@ -27,9 +27,25 @@ export function currentAuth(): AuthPayload | null {
 function decodeToken(token: string): AuthPayload | null {
   try {
     const [, payloadB64] = token.split('.');
-    const json = atob(payloadB64.replace(/-/g, '+').replace(/_/g, '/'));
+    const bytes = atob(payloadB64.replace(/-/g, '+').replace(/_/g, '/'));
+
+    // TextDecoder y no el resultado directo de atob: atob devuelve bytes Latin-1,
+    // así que un `nombre` con acentos ("José") salía mojibake en el header y en
+    // Configuración.
+    const json = new TextDecoder().decode(
+      Uint8Array.from(bytes, (c) => c.charCodeAt(0)),
+    );
+
     const parsed = JSON.parse(json);
     if (!parsed?.id) return null;
+
+    // El `exp` se ignoraba: un token vencido hace días devolvía un payload válido,
+    // la app arrancaba "logueada" y TODA request daba 401. Descartarlo acá es lo que
+    // hace que el usuario vea el login en vez de una app rota.
+    if (typeof parsed.exp === 'number' && parsed.exp * 1000 <= Date.now()) {
+      return null;
+    }
+
     return {
       id: parsed.id,
       company_id: parsed.company_id,

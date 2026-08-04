@@ -24,6 +24,15 @@ export interface DataContextValue {
   remitosLoading: boolean;
   remitosError: string | null;
   reloadRemitos: () => Promise<void>;
+  /**
+   * Refresca UN remito y lo parchea en la lista, sin reemplazarla.
+   *
+   * Es lo que hay que usar cuando un evento del bus afecta a un remito puntual:
+   * `reloadRemitos()` reemplaza el array entero, lo que re-renderiza todas las
+   * cards y —mientras dura el fetch— desmonta la lista, con lo cual el navegador
+   * pierde la posición de scroll y salta arriba.
+   */
+  refreshRemito: (id: string) => Promise<void>;
   // Updates locales (sin refetch) para reflejar cambios ya confirmados por el back.
   removeRemitoLocal: (id: string) => void;
   patchRemitoLocal: (id: string, partial: Partial<Remito>) => void;

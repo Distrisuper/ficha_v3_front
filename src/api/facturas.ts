@@ -13,5 +13,7 @@ export async function createFactura(
   return api.postForm<CreateFacturaResponse>('/facturas', form);
 }
 
-// El progreso ya no se sigue desde acá. Hay una única conexión SSE por sesión
-// (SseProvider) y las pantallas se enganchan con useProceso(processId).
+export async function approveFactura(id: UUID): Promise<void> {
+  await api.post<void>(`/facturas/submit/${id}`);
+}
+

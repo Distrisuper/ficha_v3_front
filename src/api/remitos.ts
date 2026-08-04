@@ -1,6 +1,13 @@
 import { api } from './client';
 import type { Remito, UUID } from '../types/api';
 
+/** Espejo de `UpdateRemitoSchema` del back (`src/remitos/schemas/remito.schema.ts`). */
+export interface UpdateRemitoInput {
+  remitoNro?: string | null;
+  facturaNro?: string | null;
+  fecha?: string | null;
+}
+
 export interface ListRemitosParams {
   tipo?: string; // 'remito' | 'factura' (omitir = todos)
   proveedorId?: UUID;
@@ -35,12 +42,36 @@ export async function listRemitos(sucursalId?: UUID, params?: ListRemitosParams)
   });
 }
 
-// Historial (estados terminales: aprobado / anulado). El back filtra por estado y
-// scopea por company_id; sucursalId es opcional (sin él trae todas las sucursales).
-export async function listHistorial(sucursalId?: UUID): Promise<Remito[]> {
-  const qs = sucursalId ? `?sucursalId=${encodeURIComponent(sucursalId)}` : '';
-  const data = await api.get<Remito[]>(`/remitos/history${qs}`);
-  return Array.isArray(data) ? data : [];
+export interface HistorialPage {
+  items: Remito[];
+  total: number;
+  limite: number;
+  offset: number;
+}
+
+/**
+ * Historial (estados terminales: aprobado / anulado). El back filtra por estado y
+ * scopea por company_id; sucursalId es opcional.
+ *
+ * **Ahora viene paginado**: antes devolvía el historial completo con tres joins y el
+ * front lo paginaba en memoria. La firma acepta `limite`/`offset` y devuelve el
+ * total para poder mostrar la cantidad real.
+ */
+export async function listHistorial(
+  sucursalId?: UUID,
+  limite?: number,
+  offset?: number,
+): Promise<HistorialPage> {
+  const qs = new URLSearchParams();
+  if (sucursalId) qs.set('sucursalId', sucursalId);
+  if (limite != null) qs.set('limite', String(limite));
+  if (offset != null) qs.set('offset', String(offset));
+  const query = qs.toString();
+
+  const data = await api.get<HistorialPage>(`/remitos/history${query ? `?${query}` : ''}`);
+  return data && Array.isArray(data.items)
+    ? data
+    : { items: [], total: 0, limite: limite ?? 0, offset: offset ?? 0 };
 }
 
 export const remitosApi = {
@@ -52,8 +83,15 @@ export const remitosApi = {
   get: (id: UUID) => api.get<Remito | null>(`/remitos/${id}`),
   approve: (id: UUID) => api.patch<Remito>(`/remitos/${id}/approve`),
   updateTotal: (id: UUID, total: number) => api.patch<Remito>(`/remitos/${id}/total`, { total }),
-  // Manda el remito completo (editado) para que el back verifique/persista los cambios.
-  update: (id: UUID, data: Partial<Remito>) => api.patch<Remito>(`/remitos/${id}`, data),
+  /**
+   * Edita la cabecera del remito.
+   *
+   * El back valida con una allowlist `.strict()`: cualquier campo fuera de estos
+   * tres devuelve 400. El tipo lo refleja para que no se pueda mandar de más — antes
+   * era `Partial<Remito>` y se mandaba el objeto completo, incluidos `id`, `estado`
+   * y los montos, que el back aceptaba y escribía.
+   */
+  update: (id: UUID, data: UpdateRemitoInput) => api.patch<Remito>(`/remitos/${id}`, data),
   // Backend stub: PATCH /remitos/:id/items no persiste hoy (ver aviso en UI).
   updateItems: (id: UUID, items: unknown[]) => api.patch<Remito>(`/remitos/${id}/items`, items),
   // Envía los UUID de los artículos marcados para que el back procese la carga a stock.

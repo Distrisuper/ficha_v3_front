@@ -1,7 +1,9 @@
+import { toNumero } from './numero';
+
 export function money(n: number | string | null | undefined): string {
-  const num = typeof n === 'string' ? parseFloat(n) : n;
-  if (num == null || Number.isNaN(num)) return '$ 0,00';
-  return '$ ' + num.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (n == null || n === '') return '$ 0,00';
+  // toNumero y no parseFloat: `money('1,5')` devolvía `$ 1,00`.
+  return '$ ' + toNumero(n).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 export function parseMoneyInput(v: string): number {
@@ -31,8 +33,10 @@ export function fmtDateTime(d: string | null | undefined): string {
 }
 
 export function fmtCantidad(v: number | string | null | undefined): string {
-  const n = typeof v === 'string' ? parseFloat(v) : v;
-  if (n == null || Number.isNaN(n)) return v == null ? '—' : String(v);
+  if (v == null || v === '') return '—';
+  // toNumero y no parseFloat: parseFloat('1,5') devuelve 1, así que un artículo de
+  // 1,5 unidades se mostraba como "1".
+  const n = toNumero(v);
   // Evita decimales innecesarios: 12.000 -> "12", 1.5 -> "1,5"
   return n.toLocaleString('es-AR', { maximumFractionDigits: 3 });
 }

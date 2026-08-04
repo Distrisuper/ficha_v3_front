@@ -22,6 +22,25 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Handler global de sesión vencida.
+ *
+ * Antes un 401 a mitad de sesión sólo borraba el token y **no avisaba a nadie**: el
+ * estado `auth` del AuthContext seguía poblado (se decodifica del token al montar),
+ * así que la app se veía logueada y toda acción posterior fallaba con el mensaje
+ * crudo del back. El usuario quedaba trabado sin entender por qué, y sólo volvía al
+ * login recargando la página o esperando la próxima reconexión del SSE — hasta 30
+ * minutos después.
+ *
+ * Lo registra AuthProvider. Vive acá y no en el context porque el 401 lo detecta
+ * `request()`, que no puede usar hooks.
+ */
+let onUnauthorized: (() => void) | null = null;
+
+export function setUnauthorizedHandler(fn: (() => void) | null) {
+  onUnauthorized = fn;
+}
+
 interface RequestOptions extends RequestInit {
   auth?: boolean; // default true
 }
@@ -37,6 +56,9 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
   if (res.status === 401) {
     clearToken();
+    // Un solo 401 en cualquier request devuelve al login. Sin esto la app seguía
+    // "logueada" con el token ya borrado, fallando en cada acción.
+    onUnauthorized?.();
   }
 
   if (!res.ok) {
@@ -52,7 +74,14 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
   const contentType = res.headers.get('content-type') || '';
   if (res.status === 204 || !contentType.includes('application/json')) {
-    return undefined as T;
+    // `as unknown as T`: con strictNullChecks, `undefined` ya no es comparable con
+    // un `T` sin constraint y el cast directo es TS2352.
+    //
+    // Esto sigue siendo una firma que miente: un 204 o un 200 no-JSON devuelve
+    // undefined mientras el tipo promete `T`. Cada llamador lo compensa a mano
+    // (`Array.isArray` en remitos.ts, `if (!fresco)` en DataContext). Lo correcto es
+    // firmar `Promise<T | undefined>`, pero eso obliga a tocar los ~20 call sites.
+    return undefined as unknown as T;
   }
   return res.json() as Promise<T>;
 }
