@@ -57,7 +57,7 @@ export interface OrdenCompraTracker {
  * reconstruirlo desde el snapshot del stream en vez de inferirlo de eventos.
  */
 export function useOrdenCompra(): OrdenCompraTracker {
-  const { subscribe } = useSse();
+  const { subscribe, procesosActivos } = useSse();
   const [estados, setEstados] = useState<Record<string, EstadoOrdenCompra>>({});
 
   const iniciosRef = useRef<Record<string, number>>({});
@@ -100,6 +100,26 @@ export function useOrdenCompra(): OrdenCompraTracker {
   );
 
   const marcarEnProceso = useCallback((jobId: string) => marcar(jobId, 'procesando'), [marcar]);
+
+  /**
+   * Reconstrucción desde el snapshot del stream.
+   *
+   * Esto es lo que hace que el spinner **sobreviva a un refresh**. El snapshot llega
+   * al conectar y al reconectar, con el estado persistido de cada etapa; hasta que la
+   * etapa 2 empezó a escribir `estado_oc`, no había nada que reconstruir y este hook
+   * dependía enteramente de eventos efímeros.
+   *
+   * No reemplaza a `marcarEnProceso`: son complementarios. El marcado optimista da
+   * feedback en el mismo frame del click, antes de cualquier ida al servidor; el
+   * snapshot cubre el caso de volver a una sesión con algo en vuelo. Ninguno de los
+   * dos hace redundante al otro.
+   */
+  useEffect(() => {
+    for (const proceso of procesosActivos) {
+      if (proceso.estadoOc === 'corriendo') marcar(proceso.processId, 'procesando');
+      else if (proceso.estadoOc === 'error') marcar(proceso.processId, 'fallida');
+    }
+  }, [procesosActivos, marcar]);
 
   useEffect(() => {
     // El pipeline de extracción usa el MISMO processId (el jobId) y los mismos

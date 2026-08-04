@@ -20,7 +20,25 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+
+    /*
+     * strictNullChecks, activado solo (sin `strict` completo).
+     *
+     * Es el flag que aporta la mayor parte del valor en este código: sin él, `null`
+     * es asignable a `boolean` y viceversa, con lo cual el tri-estado de
+     * `stockMatch`/`precioMatch` (true / false / null = sin verificar) **no lo
+     * verifica nadie**. El tipo documenta que confundir "no coincide" con "sin
+     * verificar" es un bug, pero el compilador no lo podía atajar. Ahora sí.
+     *
+     * Se activa solo y no vía `strict` para acotar el fallout a la nulabilidad, que
+     * es lo que importa acá. Faltan todavía, en orden de valor:
+     *   - noUncheckedIndexedAccess: los lookups sobre Record<enum, T> devuelven
+     *     `undefined` si el back agrega un valor nuevo, y hoy eso da `NaN%` en la
+     *     barra de progreso sin que nada avise.
+     *   - noImplicitAny y el resto de `strict`.
+     */
+    "strictNullChecks": true
   },
   "include": ["src"]
 }

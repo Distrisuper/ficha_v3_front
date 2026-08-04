@@ -73,9 +73,24 @@ export interface DomainEvent<P = unknown> {
 
 export type StreamEventType = 'stream.snapshot' | 'stream.heartbeat' | 'stream.expirado';
 
+export type EstadoExtraccion = 'pendiente' | 'corriendo' | 'ok' | 'error';
+
+/** `null` = la validación contra la orden de compra nunca se pidió. */
+export type EstadoOrdenCompra = 'corriendo' | 'ok' | 'error' | null;
+
+/**
+ * Estado persistido de un proceso, tal como lo devuelve el snapshot del stream.
+ *
+ * Los dos estados van separados porque el pipeline tiene dos etapas independientes:
+ * un fallo de la orden de compra NO invalida los remitos extraídos. Antes esto era un
+ * `estado: string` con tres valores que sólo describía la primera etapa, y la segunda
+ * no se persistía en absoluto — de ahí los parches en memoria de este front.
+ */
 export interface ProcesoSnapshot {
   processId: string;
-  estado: string;
+  estadoExtraccion: EstadoExtraccion;
+  estadoOc: EstadoOrdenCompra;
+  errorCode: string | null;
   tipo: string;
   seq: number;
   createdAt: string;

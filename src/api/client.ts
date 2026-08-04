@@ -74,7 +74,14 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
   const contentType = res.headers.get('content-type') || '';
   if (res.status === 204 || !contentType.includes('application/json')) {
-    return undefined as T;
+    // `as unknown as T`: con strictNullChecks, `undefined` ya no es comparable con
+    // un `T` sin constraint y el cast directo es TS2352.
+    //
+    // Esto sigue siendo una firma que miente: un 204 o un 200 no-JSON devuelve
+    // undefined mientras el tipo promete `T`. Cada llamador lo compensa a mano
+    // (`Array.isArray` en remitos.ts, `if (!fresco)` en DataContext). Lo correcto es
+    // firmar `Promise<T | undefined>`, pero eso obliga a tocar los ~20 call sites.
+    return undefined as unknown as T;
   }
   return res.json() as Promise<T>;
 }

@@ -42,12 +42,36 @@ export async function listRemitos(sucursalId?: UUID, params?: ListRemitosParams)
   });
 }
 
-// Historial (estados terminales: aprobado / anulado). El back filtra por estado y
-// scopea por company_id; sucursalId es opcional (sin él trae todas las sucursales).
-export async function listHistorial(sucursalId?: UUID): Promise<Remito[]> {
-  const qs = sucursalId ? `?sucursalId=${encodeURIComponent(sucursalId)}` : '';
-  const data = await api.get<Remito[]>(`/remitos/history${qs}`);
-  return Array.isArray(data) ? data : [];
+export interface HistorialPage {
+  items: Remito[];
+  total: number;
+  limite: number;
+  offset: number;
+}
+
+/**
+ * Historial (estados terminales: aprobado / anulado). El back filtra por estado y
+ * scopea por company_id; sucursalId es opcional.
+ *
+ * **Ahora viene paginado**: antes devolvía el historial completo con tres joins y el
+ * front lo paginaba en memoria. La firma acepta `limite`/`offset` y devuelve el
+ * total para poder mostrar la cantidad real.
+ */
+export async function listHistorial(
+  sucursalId?: UUID,
+  limite?: number,
+  offset?: number,
+): Promise<HistorialPage> {
+  const qs = new URLSearchParams();
+  if (sucursalId) qs.set('sucursalId', sucursalId);
+  if (limite != null) qs.set('limite', String(limite));
+  if (offset != null) qs.set('offset', String(offset));
+  const query = qs.toString();
+
+  const data = await api.get<HistorialPage>(`/remitos/history${query ? `?${query}` : ''}`);
+  return data && Array.isArray(data.items)
+    ? data
+    : { items: [], total: 0, limite: limite ?? 0, offset: offset ?? 0 };
 }
 
 export const remitosApi = {

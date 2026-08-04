@@ -14,6 +14,9 @@ interface Props {
 
 const PAGE_SIZE = 20;
 
+/** Tope que acepta `GET /remitos/history`. Ver la nota de `reload`. */
+const LIMITE_MAX_BACK = 200;
+
 // "Artículos" = cantidad de renglones distintos (p. ej. pastillas + amortiguador = 2).
 // "Items" = suma de las cantidades de esos renglones (x3 + x2 = 5). `cantidad` puede
 // venir como string desde el back, por eso el parseo compartido.
@@ -28,6 +31,8 @@ export function HistorialPage({ filters }: Props) {
   // El historial NO comparte lista con Pendientes: se pide on-demand a
   // GET /remitos/history (que ya filtra los estados server-side).
   const [remitos, setRemitos] = useState<Remito[]>([]);
+  /** Total en el servidor. Puede ser mayor que `remitos.length` (ver reload). */
+  const [totalServidor, setTotalServidor] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
@@ -46,14 +51,28 @@ export function HistorialPage({ filters }: Props) {
     [sucursales],
   );
 
-  // Solo depende de la sucursal (único filtro que viaja al endpoint). Los demás
-  // filtros (proveedor/fecha) se aplican client-side, sin refetch.
+  /**
+   * Sólo depende de la sucursal (único filtro que viaja al endpoint). Los demás
+   * filtros (proveedor/fecha) se aplican client-side, sin refetch.
+   *
+   * Se pide el MÁXIMO que el back permite (200) en vez de paginar de verdad.
+   *
+   * Es deliberado y es un compromiso: los filtros de proveedor y fecha se evalúan en
+   * el cliente, así que con paginación real un filtro sólo alcanzaría a la página
+   * cargada y los resultados serían incorrectos sin que nada lo indique. Paginar de
+   * verdad exige mover esos filtros al endpoint, que es un cambio más grande.
+   *
+   * Lo que sí se arregló es la cota: antes la respuesta crecía sin límite con el uso
+   * de la empresa. Ahora está acotada, y si hay más de 200 el usuario lo ve avisado
+   * en pantalla en vez de creer que está mirando todo.
+   */
   const reload = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await remitosApi.history(sucursalId || undefined);
-      setRemitos(data);
+      const data = await remitosApi.history(sucursalId || undefined, LIMITE_MAX_BACK);
+      setRemitos(data.items);
+      setTotalServidor(data.total);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo cargar el historial');
     } finally {
@@ -136,6 +155,18 @@ export function HistorialPage({ filters }: Props) {
 
       {error && (
         <div style={{ padding: '14px 20px', background: 'var(--err-weak)', color: 'var(--err)', fontSize: 13 }}>{error}</div>
+      )}
+
+      {/* Aviso explícito de truncado. Sin esto el usuario cree que está viendo el
+          historial completo y exporta un CSV incompleto sin saberlo. */}
+      {!loading && totalServidor > remitos.length && (
+        <div
+          role="status"
+          style={{ padding: '12px 20px', background: '#fdf8ec', color: 'var(--warn)', fontSize: 13, fontWeight: 600 }}
+        >
+          Mostrando los {remitos.length} registros más recientes de {totalServidor}. Filtrá por
+          sucursal o fecha para acotar la búsqueda — el CSV exporta sólo lo cargado.
+        </div>
       )}
 
       <div className="ds-scroll" style={{ overflow: 'auto', maxHeight: 'calc(100vh - 280px)' }}>

@@ -8,6 +8,7 @@ import { applyFilters, type RemitoFilters } from '../utils/filtros';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { BadgeOrdenCompra, IconosMatch, Spinner } from '../components/OrdenCompra';
 import { useOrdenCompra } from '../hooks/useOrdenCompra';
+import { useProcesosFallidos } from '../hooks/useProcesosFallidos';
 import type { Articulo, Remito } from '../types/api';
 
 type ConfirmAction = { type: 'factura' | 'stock'; remito: Remito };
@@ -30,6 +31,10 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
   // de suscripciones al stream para toda la pantalla (no se puede llamar un hook
   // por fila, y tampoco haría falta: el stream es uno).
   const { estados: ordenCompraPorJob, marcarEnProceso } = useOrdenCompra();
+
+  // Fallos definitivos, del estado persistido en el job. No dependen de haber estado
+  // conectado cuando ocurrieron: sobreviven a un refresh.
+  const procesosFallidos = useProcesosFallidos();
 
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -198,6 +203,49 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
         <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--blue)' }}>{pendientes.length} remitos</span>
         <span style={{ fontSize: 14, color: 'var(--muted)' }}>esperando ser cargados al stock.</span>
       </div>
+
+      {/*
+        Fallos definitivos, derivados del estado persistido del job.
+        Antes eran INVISIBLES: el job quedaba en `error` en la base y ninguna
+        pantalla lo consultaba. El operador veía que su comprobante no aparecía y no
+        tenía forma de saber si tardaba o si había fallado.
+      */}
+      {procesosFallidos.length > 0 && (
+        <div style={{ marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 1100 }}>
+          {procesosFallidos.map((f) => {
+            // Un fallo de extracción invalida el comprobante: hay que volver a
+            // subirlo. Uno de orden de compra sólo invalida el cruce de precios, los
+            // remitos siguen siendo usables. Igualarlos haría que el operador tratara
+            // el segundo como el primero.
+            const grave = f.etapa === 'extraccion';
+            return (
+              <div
+                key={`${f.processId}-${f.etapa}`}
+                role="alert"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  background: grave ? 'var(--err-weak)' : '#fdf8ec',
+                  color: grave ? 'var(--err)' : 'var(--warn)',
+                  border: `1px solid ${grave ? '#f0c6c6' : '#f3dca6'}`,
+                  borderRadius: 8,
+                  padding: '10px 14px',
+                  fontSize: 13,
+                }}
+              >
+                <strong style={{ fontWeight: 700 }}>
+                  {grave ? 'No se procesó' : 'Orden de compra no verificada'}
+                </strong>
+                <span>{f.mensaje}</span>
+                {f.errorCode && (
+                  <code style={{ marginLeft: 'auto', fontSize: 11.5, opacity: 0.75 }}>{f.errorCode}</code>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {notice && (
         <div style={{ marginBottom: 16, background: '#eff4ff', color: 'var(--blue)', borderRadius: 8, padding: '10px 14px', fontSize: 13, maxWidth: 1100 }}>
