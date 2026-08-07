@@ -13,6 +13,9 @@ import { money } from '../utils/money';
 import { round2, toNumero } from '../utils/numero';
 import { colorFor } from '../utils/colors';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { PanelAdvertencias } from '../components/PanelAdvertencias';
+import { formatNroComprobante, normalizarNroComprobante } from '../utils/comprobante';
+import { soloAvisos, soloErrores, validarLote } from '../utils/validacionFactura';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 
 type Status = 'idle' | 'uploading' | 'processing' | 'done' | 'error';
@@ -262,16 +265,21 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
     return { subtotal, percepciones, descuentos, iva, total };
   }, [scope]);
 
-  // Detección de ediciones: comparamos cada remito contra su snapshot original.
+  // Verificaciones previas a la carga. Se corren sobre `scope` (lo que realmente se va
+  // a aprobar) y no sobre `remitosCargados`: si el operador filtró por un remito, no
+  // tiene sentido bloquearlo por un problema de otro que no está por procesar.
+  const advertencias = useMemo(() => validarLote(scope), [scope]);
+  const errores = useMemo(() => soloErrores(advertencias), [advertencias]);
+  const avisos = useMemo(() => soloAvisos(advertencias), [advertencias]);
+  // Bloqueo duro: mientras haya un error el comprobante no se manda.
+  const bloqueadoPorValidacion = errores.length > 0;
+
+  // Snapshot original de cada remito: sirve para detectar ediciones (qué mandar en el
+  // PATCH) y como referencia de la alícuota de IVA al recalcular.
   const originalById = useMemo(
     () => Object.fromEntries(originalRemitos.map((r) => [r.id, r])),
     [originalRemitos],
   );
-  const isDirty = (r: Remito): boolean => {
-    const orig = originalById[r.id];
-    return !orig || JSON.stringify(r) !== JSON.stringify(orig);
-  };
-
   function updateArticuloLocal(remitoId: string, articuloId: string, field: keyof Articulo, value: string) {
     setRemitosCargados((prev) =>
       prev.map((r) => {
@@ -287,7 +295,14 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
   // Edición local (persistida en localStorage) del Nº de factura / remito.
   // facturaNro es compartido por todo el lote de un mismo comprobante (applyToAll).
   function updateRemitoField(remitoId: string, field: 'facturaNro' | 'remitoNro', value: string, applyToAll = false) {
-    setRemitosCargados((prev) => prev.map((r) => (applyToAll || r.id === remitoId ? { ...r, [field]: value } : r)));
+    // Se normaliza al confirmar la edición, no mientras se tipea: reescribir el input
+    // caracter por caracter le pelea al operador. Si no se pudo normalizar se guarda
+    // el valor crudo tal cual — así la advertencia puede mostrar lo que realmente
+    // escribió en lugar de un campo vacío.
+    const normalizado = normalizarNroComprobante(value) ?? value.trim();
+    setRemitosCargados((prev) =>
+      prev.map((r) => (applyToAll || r.id === remitoId ? { ...r, [field]: normalizado } : r)),
+    );
   }
 
   async function commitEdit() {
@@ -307,6 +322,14 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
 
   async function handleProcesar() {
     if (scope.length === 0) return;
+    // Última barrera. El botón y el modal ya lo impiden, pero esta función es la que
+    // toca el back: la validación tiene que estar del lado del que hace el POST, no
+    // sólo del que dibuja el botón.
+    if (bloqueadoPorValidacion) {
+      setSuccessMsg(null);
+      setErrorMsg('El comprobante tiene datos a corregir. Revisá las advertencias antes de procesar.');
+      return;
+    }
     setApproving(true);
     setErrorMsg(null);
     try {
@@ -320,17 +343,28 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
       //
       // Los montos NO van acá: se derivan de los artículos vía
       // `PATCH /remitos/:id/items`.
-      const editados = scope.filter(isDirty);
+      //
+      // Los números viajan NORMALIZADOS (sólo dígitos, con los ceros a la izquierda
+      // completados): los separadores son presentación, no dato. Sin esto el mismo
+      // comprobante entra a la base como `1-234`, `0001-00000234` y `000100000234`
+      // según cómo lo haya impreso el proveedor, y cualquier cruce posterior falla
+      // por una diferencia que no existe (ver utils/comprobante.ts).
+      const payloadDe = (r: Remito) => ({
+        remitoNro: normalizarNroComprobante(r.remitoNro) ?? r.remitoNro,
+        facturaNro: normalizarNroComprobante(r.facturaNro) ?? r.facturaNro,
+        fecha: r.fecha,
+      });
+      // Se compara el PAYLOAD contra el original, no el remito entero: `isDirty` mira
+      // el JSON completo (incluidos los artículos, que no van en este PATCH) y además
+      // no ve el caso "no lo editaron pero la normalización lo cambia".
+      const editados = scope.filter((r) => {
+        const orig = originalById[r.id];
+        if (!orig) return true;
+        const p = payloadDe(r);
+        return p.remitoNro !== orig.remitoNro || p.facturaNro !== orig.facturaNro || p.fecha !== orig.fecha;
+      });
       if (editados.length) {
-        await Promise.all(
-          editados.map((r) =>
-            remitosApi.update(r.id, {
-              remitoNro: r.remitoNro,
-              facturaNro: r.facturaNro,
-              fecha: r.fecha,
-            }),
-          ),
-        );
+        await Promise.all(editados.map((r) => remitosApi.update(r.id, payloadDe(r))));
       }
       await Promise.all(scope.map((r) => approveFactura(r.id)));
       setSuccessMsg('Comprobante(s) aprobado(s) correctamente.');
@@ -439,6 +473,18 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
             La API sólo tiene un endpoint de carga (factura); el PDF se procesa igual, sin desglose de IVA abajo.
           </div>
         )}
+
+        {/*
+          Advertencias de validación, arriba de todo y siempre visibles mientras haya un
+          comprobante en pantalla. Sólo los ERRORES: los avisos (importes en cero) son
+          situaciones legítimas y mostrarlos acá permanentemente los volvería ruido que
+          el operador aprende a ignorar — van únicamente en el modal, que es el último
+          momento en que puede frenar.
+        */}
+        <PanelAdvertencias
+          advertencias={errores}
+          titulo="Revisá estos datos antes de procesar"
+        />
 
         <section style={cardStyle}>
           <div style={{ display: 'flex', gap: 22, alignItems: 'flex-end', flexWrap: 'wrap' }}>
@@ -667,6 +713,7 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
               {editHeader?.field === 'facturaNro' ? (
                 <input
                   autoFocus
+                  placeholder="0001-00000234"
                   defaultValue={remitosCargados[0]?.facturaNro ?? ''}
                   onBlur={(e) => {
                     updateRemitoField(remitosCargados[0]?.id ?? '', 'facturaNro', e.target.value, true);
@@ -687,7 +734,7 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
                   title="Doble clic para editar"
                   style={{ ...readonlyBoxStyle, cursor: remitosCargados.length > 0 ? 'text' : 'default' }}
                 >
-                  {remitosCargados[0]?.facturaNro || '—'}
+                  {formatNroComprobante(remitosCargados[0]?.facturaNro)}
                 </div>
               )}
             </div>
@@ -705,6 +752,7 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
                       <input
                         key={r.id}
                         autoFocus
+                        placeholder="0001-00000234"
                         defaultValue={r.remitoNro ?? ''}
                         onBlur={(e) => {
                           updateRemitoField(r.id, 'remitoNro', e.target.value);
@@ -743,7 +791,7 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
                       }}
                     >
                       <span style={{ width: 9, height: 9, flex: 'none', borderRadius: '50%', background: color }} />
-                      <span>{r.remitoNro || '(sin número)'}</span>
+                      <span>{r.remitoNro ? formatNroComprobante(r.remitoNro) : '(sin número)'}</span>
                     </button>
                   );
                 })}
@@ -764,22 +812,30 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
                 </div>
               </>
             )}
+            {/*
+              El botón NO se deshabilita por validación: abre el modal igual. Ahí está
+              el detalle de qué hay que corregir, y es el modal el que bloquea la
+              confirmación. Deshabilitar el botón escondería la explicación de por qué
+              está bloqueado — el operador vería un botón gris y ninguna razón.
+            */}
             <button
               disabled={scope.length === 0 || approving}
               onClick={() => setConfirmProcesar(true)}
+              title={bloqueadoPorValidacion ? `${errores.length} dato(s) a corregir antes de procesar` : undefined}
               style={{
                 marginTop: 8,
                 height: 46,
                 borderRadius: 9,
                 border: 'none',
-                background: scope.length === 0 || approving ? '#9bbfa8' : 'var(--ok)',
+                background:
+                  scope.length === 0 || approving ? '#9bbfa8' : bloqueadoPorValidacion ? 'var(--warn)' : 'var(--ok)',
                 color: '#fff',
                 fontWeight: 700,
                 fontSize: 15,
                 cursor: scope.length === 0 || approving ? 'not-allowed' : 'pointer',
               }}
             >
-              {approving ? 'Procesando…' : 'Procesar factura'}
+              {approving ? 'Procesando…' : bloqueadoPorValidacion ? 'Revisar y procesar' : 'Procesar factura'}
             </button>
           </div>
         </section>
@@ -789,8 +845,8 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
           const single = scope.length === 1 ? scope[0] : null;
           const rows: [string, string][] = single
             ? [
-                ['Nº Factura', single.facturaNro || '—'],
-                ['Nº Remito', single.remitoNro || '—'],
+                ['Nº Factura', formatNroComprobante(single.facturaNro)],
+                ['Nº Remito', formatNroComprobante(single.remitoNro)],
                 ['Proveedor', provNombre],
                 ['Total', money(totals.total)],
               ]
@@ -803,7 +859,8 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
             <ConfirmDialog
               open
               busy={approving}
-              title="Confirmar carga de factura"
+              confirmDisabled={bloqueadoPorValidacion}
+              title={bloqueadoPorValidacion ? 'No se puede cargar la factura' : 'Confirmar carga de factura'}
               confirmLabel="Cargar factura"
               onCancel={() => setConfirmProcesar(false)}
               onConfirm={() => {
@@ -811,13 +868,21 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
                 void handleProcesar();
               }}
               message={
-                <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', rowGap: 8, columnGap: 16, marginTop: 4 }}>
-                  {rows.map(([k, v]) => (
-                    <Fragment key={k}>
-                      <span style={{ color: 'var(--muted-2)', fontWeight: 600 }}>{k}</span>
-                      <span style={{ color: 'var(--ink-2)', fontWeight: 700, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{v}</span>
-                    </Fragment>
-                  ))}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 4 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', rowGap: 8, columnGap: 16 }}>
+                    {rows.map(([k, v]) => (
+                      <Fragment key={k}>
+                        <span style={{ color: 'var(--muted-2)', fontWeight: 600 }}>{k}</span>
+                        <span style={{ color: 'var(--ink-2)', fontWeight: 700, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{v}</span>
+                      </Fragment>
+                    ))}
+                  </div>
+                  {/* Errores: bloquean. Avisos: no bloquean, pero acá SÍ se muestran. */}
+                  <PanelAdvertencias
+                    advertencias={errores}
+                    titulo="Hay que corregir esto antes de cargar"
+                  />
+                  <PanelAdvertencias advertencias={avisos} titulo="Tené en cuenta" />
                 </div>
               }
             />

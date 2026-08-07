@@ -6,7 +6,10 @@ import { toNumero } from '../utils/numero';
 import { PENDIENTES_ESTADOS } from '../utils/estados';
 import { applyFilters, type RemitoFilters } from '../utils/filtros';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { PanelAdvertencias } from '../components/PanelAdvertencias';
 import { BadgeOrdenCompra, IconosMatch, Spinner } from '../components/OrdenCompra';
+import { formatNroComprobante } from '../utils/comprobante';
+import { soloAvisos, soloErrores, validarRemito, type Advertencia } from '../utils/validacionFactura';
 import { useOrdenCompra } from '../hooks/useOrdenCompra';
 import { useProcesosFallidos } from '../hooks/useProcesosFallidos';
 import type { Articulo, Remito } from '../types/api';
@@ -35,6 +38,23 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
   // Fallos definitivos, del estado persistido en el job. No dependen de haber estado
   // conectado cuando ocurrieron: sobreviven a un refresh.
   const procesosFallidos = useProcesosFallidos();
+
+  // Verificaciones previas a la carga de la factura, por remito.
+  //
+  // Sólo se calculan para las cards que van a mandar la FACTURA (`facturaCargada !==
+  // true`). Las otras ya la cargaron y lo único que resta es mover mercadería a stock:
+  // bloquear eso por un total mal sumado dejaría el stock trabado por un problema que
+  // ya no está en juego.
+  //
+  // Va en un `useMemo` sobre la lista y no dentro del `.map` para no re-validar cada
+  // remito en cada render (se redibuja con cada evento del stream de orden de compra).
+  const advertenciasPorRemito = useMemo(() => {
+    const out: Record<string, Advertencia[]> = {};
+    for (const r of pendientes) {
+      if (r.facturaCargada !== true) out[r.id] = validarRemito(r);
+    }
+    return out;
+  }, [pendientes]);
 
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -172,6 +192,12 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
   }
 
   async function handleCargarFactura(r: Remito) {
+    // Última barrera antes del POST. El modal ya bloquea el botón, pero la validación
+    // tiene que estar del lado del que llama al back, no sólo del que dibuja el botón.
+    if (soloErrores(advertenciasPorRemito[r.id] ?? []).length > 0) {
+      setNotice('La factura tiene datos a corregir. Revisá las advertencias de la card.');
+      return;
+    }
     try {
       setBusyId(r.id);
       setNotice(null);
@@ -204,13 +230,7 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
         <span style={{ fontSize: 14, color: 'var(--muted)' }}>esperando ser cargados al stock.</span>
       </div>
 
-      {/*
-        Fallos definitivos, derivados del estado persistido del job.
-        Antes eran INVISIBLES: el job quedaba en `error` en la base y ninguna
-        pantalla lo consultaba. El operador veía que su comprobante no aparecía y no
-        tenía forma de saber si tardaba o si había fallado.
-      */}
-      {procesosFallidos.length > 0 && (
+      {/* {procesosFallidos.length > 0 && (
         <div style={{ marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 1100 }}>
           {procesosFallidos.map((f) => {
             // Un fallo de extracción invalida el comprobante: hay que volver a
@@ -245,7 +265,7 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
             );
           })}
         </div>
-      )}
+      )} */}
 
       {notice && (
         <div style={{ marginBottom: 16, background: '#eff4ff', color: 'var(--blue)', borderRadius: 8, padding: '10px 14px', fontSize: 13, maxWidth: 1100 }}>
@@ -303,6 +323,8 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
           // El flujo de orden de compra publica su progreso con processId = jobId.
           const estadoOc = r.jobId ? ordenCompraPorJob[r.jobId] : undefined;
           const ocProcesando = estadoOc === 'procesando';
+          // Sólo los errores se muestran en la card; los avisos van en el modal.
+          const erroresCard = soloErrores(advertenciasPorRemito[r.id] ?? []);
           return (
             <div
               key={r.id}
@@ -335,8 +357,8 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                 }}
               >
                 <div style={{ display: 'flex', gap: 36, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <HeadCell label="Nº REMITO" value={r.remitoNro || '—'} big />
-                  <HeadCell label="Nº FACTURA" value={r.facturaNro || '—'} />
+                  <HeadCell label="Nº REMITO" value={formatNroComprobante(r.remitoNro)} big />
+                  <HeadCell label="Nº FACTURA" value={formatNroComprobante(r.facturaNro)} />
                   <HeadCell label="PROVEEDOR" value={provName(r)} />
                   {mostrarSucursal && <HeadCell label="SUCURSAL" value={sucName(r)} />}
                   <HeadCell label="ESTADO" value={r.facturaCargada === true ? 'Factura cargada' : 'Remito Cargado'} />
@@ -465,6 +487,11 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                 </div>
               </div>
               <div style={{ padding: '14px 22px 16px', borderTop: '1px solid #eef1f6', display: 'flex', flexDirection: 'column', gap: 12, background: esFacturaACargar ? '#fbfcfe' : '#fff' }}>
+                {/*
+                  Advertencias arriba del desglose económico: si los números no cierran,
+                  el operador tiene que leerlo ANTES de mirar el total, no después.
+                */}
+                <PanelAdvertencias advertencias={erroresCard} titulo="Esta factura no se puede cargar" />
                 {esFacturaACargar && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 8px', fontSize: 12.5, color: 'var(--muted-2)' }}>
                     <EcoInline k="Subtotal" v={money(subtotal)} />
@@ -502,22 +529,33 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                         {editing ? 'Listo' : 'Seleccionar artículos'}
                       </button>
                     )}
+                    {/*
+                      El botón sigue abriendo el modal aunque haya errores: ahí está el
+                      detalle y es el modal el que bloquea la confirmación. Un botón gris
+                      sin explicación es peor que uno que abre y dice por qué no puede.
+                    */}
                     <button
                       onClick={() => setConfirmAction({ type: esFacturaACargar ? 'factura' : 'stock', remito: r })}
                       disabled={busyId === r.id || (editing && selCount === 0)}
+                      title={erroresCard.length > 0 ? `${erroresCard.length} dato(s) a corregir` : undefined}
                       style={{
                         height: 44,
                         padding: '0 26px',
                         borderRadius: 9,
                         border: 'none',
-                        background: busyId === r.id || (editing && selCount === 0) ? '#8a94a6' : 'var(--ok)',
+                        background:
+                          busyId === r.id || (editing && selCount === 0)
+                            ? '#8a94a6'
+                            : erroresCard.length > 0
+                              ? 'var(--warn)'
+                              : 'var(--ok)',
                         color: '#fff',
                         fontWeight: 700,
                         fontSize: 14,
                         cursor: busyId === r.id || (editing && selCount === 0) ? 'not-allowed' : 'pointer',
                       }}
                     >
-                      {busyId === r.id ? 'Cargando…' : editing ? `Cargar (${selCount})` : r.facturaCargada === true ? 'Cargar Remito' : 'Cargar Factura'}
+                      {busyId === r.id ? 'Cargando…' : editing ? `Cargar (${selCount})` : r.facturaCargada === true ? 'Cargar Remito' : erroresCard.length > 0 ? 'Revisar factura' : 'Cargar Factura'}
                     </button>
                   </div>
                 </div>
@@ -530,15 +568,21 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
       {confirmAction && (() => {
         const r = confirmAction.remito;
         const esFactura = confirmAction.type === 'factura';
+        // Se recalcula contra la lista actual (no contra el snapshot guardado en
+        // `confirmAction`): si un evento del stream actualizó el remito con el modal
+        // abierto, se confirma sobre lo que hay ahora.
+        const advertencias = esFactura ? advertenciasPorRemito[r.id] ?? [] : [];
+        const errores = soloErrores(advertencias);
+        const avisos = soloAvisos(advertencias);
         const rows: [string, string][] = esFactura
           ? [
-              ['Nº Factura', r.facturaNro || '—'],
-              ['Nº Remito', r.remitoNro || '—'],
+              ['Nº Factura', formatNroComprobante(r.facturaNro)],
+              ['Nº Remito', formatNroComprobante(r.remitoNro)],
               ['Proveedor', provName(r)],
               ['Total', money(totalFacturaOf(r))],
             ]
           : [
-              ['Nº Remito', r.remitoNro || '—'],
+              ['Nº Remito', formatNroComprobante(r.remitoNro)],
               ['Proveedor', provName(r)],
               ['Items', String(totalUnidades(r, getSelected(r)))],
             ];
@@ -546,7 +590,14 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
           <ConfirmDialog
             open
             busy={busyId === r.id}
-            title={esFactura ? 'Confirmar carga de factura' : 'Confirmar carga de remito'}
+            confirmDisabled={errores.length > 0}
+            title={
+              errores.length > 0
+                ? 'No se puede cargar la factura'
+                : esFactura
+                  ? 'Confirmar carga de factura'
+                  : 'Confirmar carga de remito'
+            }
             confirmLabel={esFactura ? 'Cargar factura' : 'Cargar remito'}
             onCancel={() => setConfirmAction(null)}
             onConfirm={() => {
@@ -555,13 +606,17 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
               else handleCargarStock(r);
             }}
             message={
-              <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', rowGap: 8, columnGap: 16, marginTop: 4 }}>
-                {rows.map(([k, v]) => (
-                  <Fragment key={k}>
-                    <span style={{ color: 'var(--muted-2)', fontWeight: 600 }}>{k}</span>
-                    <span style={{ color: 'var(--ink-2)', fontWeight: 700, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{v}</span>
-                  </Fragment>
-                ))}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 4 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', rowGap: 8, columnGap: 16 }}>
+                  {rows.map(([k, v]) => (
+                    <Fragment key={k}>
+                      <span style={{ color: 'var(--muted-2)', fontWeight: 600 }}>{k}</span>
+                      <span style={{ color: 'var(--ink-2)', fontWeight: 700, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{v}</span>
+                    </Fragment>
+                  ))}
+                </div>
+                <PanelAdvertencias advertencias={errores} titulo="Hay que corregir esto antes de cargar" />
+                <PanelAdvertencias advertencias={avisos} titulo="Tené en cuenta" />
               </div>
             }
           />

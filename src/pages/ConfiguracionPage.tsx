@@ -514,19 +514,22 @@ function ProveedorAddForm({ busy, onSubmit, onCancel }: ProveedorAddFormProps) {
   const [nombre, setNombre] = useState('');
   const [razonSocial, setRazonSocial] = useState('');
   const [cuit, setCuit] = useState('');
+  const [codigoERP, setCodigoERP] = useState('');
 
   const nombreValid = nombre.trim() !== '';
   const razonValid = razonSocial.trim() !== '';
   const cuitValid = cuitEsValido(cuit);
-  const canSubmit = !busy && nombreValid && razonValid && cuitValid;
+  const codigoERPValid = codigoERP.trim() !== '';
+  const canSubmit = !busy && nombreValid && razonValid && cuitValid && codigoERPValid;
 
   async function submit() {
     if (!canSubmit) return;
-    const ok = await onSubmit({ nombre, razonSocial, cuit });
+    const ok = await onSubmit({ nombre, razonSocial, cuit, codigoERP: codigoERP.trim() });
     if (!ok) return; // el error ya se muestra arriba; los campos quedan para corregir
     setNombre('');
     setRazonSocial('');
     setCuit('');
+    setCodigoERP('');
     onCancel();
   }
 
@@ -575,6 +578,17 @@ function ProveedorAddForm({ busy, onSubmit, onCancel }: ProveedorAddFormProps) {
           </span>
         )}
       </label>
+      <label style={fieldLabel}>
+        Código ERP
+        <input
+          value={codigoERP}
+          onChange={(e) => setCodigoERP(e.target.value)}
+          onKeyDown={onEnter}
+          placeholder="Código de proveedor en el sistema ERP"
+          style={fieldInput}
+        />
+      </label>
+      
       <div style={{ display: 'flex', gap: 10 }}>
         <button
           onClick={() => void submit()}
