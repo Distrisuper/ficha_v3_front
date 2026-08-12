@@ -7,8 +7,9 @@ import { PENDIENTES_ESTADOS } from '../utils/estados';
 import { applyFilters, type RemitoFilters } from '../utils/filtros';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { BadgeOrdenCompra, IconosMatch, Spinner } from '../components/OrdenCompra';
+import { formatNroComprobante } from '../utils/comprobante';
 import { useOrdenCompra } from '../hooks/useOrdenCompra';
-import { useProcesosFallidos } from '../hooks/useProcesosFallidos';
+// import { useProcesosFallidos } from '../hooks/useProcesosFallidos'; // reactivar junto con el bloque de alertas comentado
 import type { Articulo, Remito } from '../types/api';
 
 type ConfirmAction = { type: 'factura' | 'stock'; remito: Remito };
@@ -34,7 +35,10 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
 
   // Fallos definitivos, del estado persistido en el job. No dependen de haber estado
   // conectado cuando ocurrieron: sobreviven a un refresh.
-  const procesosFallidos = useProcesosFallidos();
+  // NOTA: el hook se reactiva junto con el bloque de alertas de `procesosFallidos` que
+  // está comentado más abajo. Mientras ese bloque no se use, dejarlo activo rompía el
+  // build (noUnusedLocals), así que queda comentado a la par.
+  // const procesosFallidos = useProcesosFallidos();
 
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -204,13 +208,7 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
         <span style={{ fontSize: 14, color: 'var(--muted)' }}>esperando ser cargados al stock.</span>
       </div>
 
-      {/*
-        Fallos definitivos, derivados del estado persistido del job.
-        Antes eran INVISIBLES: el job quedaba en `error` en la base y ninguna
-        pantalla lo consultaba. El operador veía que su comprobante no aparecía y no
-        tenía forma de saber si tardaba o si había fallado.
-      */}
-      {procesosFallidos.length > 0 && (
+      {/* {procesosFallidos.length > 0 && (
         <div style={{ marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 1100 }}>
           {procesosFallidos.map((f) => {
             // Un fallo de extracción invalida el comprobante: hay que volver a
@@ -245,7 +243,7 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
             );
           })}
         </div>
-      )}
+      )} */}
 
       {notice && (
         <div style={{ marginBottom: 16, background: '#eff4ff', color: 'var(--blue)', borderRadius: 8, padding: '10px 14px', fontSize: 13, maxWidth: 1100 }}>
@@ -335,8 +333,8 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                 }}
               >
                 <div style={{ display: 'flex', gap: 36, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <HeadCell label="Nº REMITO" value={r.remitoNro || '—'} big />
-                  <HeadCell label="Nº FACTURA" value={r.facturaNro || '—'} />
+                  <HeadCell label="Nº REMITO" value={formatNroComprobante(r.remitoNro)} big />
+                  <HeadCell label="Nº FACTURA" value={formatNroComprobante(r.facturaNro)} />
                   <HeadCell label="PROVEEDOR" value={provName(r)} />
                   {mostrarSucursal && <HeadCell label="SUCURSAL" value={sucName(r)} />}
                   <HeadCell label="ESTADO" value={r.facturaCargada === true ? 'Factura cargada' : 'Remito Cargado'} />
@@ -414,12 +412,23 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                             />
                           )}
                           <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                            <span style={{ fontSize: 14, color: 'var(--ink-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={it.nombre}>
+                            <span
+                              style={{
+                                fontSize: 14,
+                                color: 'var(--ink-2)',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}
+                              title={it.nombre}
+                            >
                               {it.nombre || '—'}
                             </span>
-                            {it.codigo ? (
-                              <span style={{ fontSize: 11.5, color: 'var(--muted-2)', fontVariantNumeric: 'tabular-nums' }}>{it.codigo}</span>
-                            ) : null}
+                            {it.codigo && (
+                              <span style={{ fontSize: 11.5, color: 'var(--muted-2)', fontVariantNumeric: 'tabular-nums' }}>
+                                {it.codigo}
+                              </span>
+                            )}
                           </div>
                         </div>
                         <span style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 'none' }}>
@@ -477,7 +486,9 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                   {esFacturaACargar ? (
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: 9 }}>
                       <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '.5px', color: 'var(--muted-2)' }}>TOTAL</span>
-                      <span style={{ fontSize: 23, fontWeight: 800, color: 'var(--blue)', fontVariantNumeric: 'tabular-nums' }}>{money(totalFactura)}</span>
+                      <span style={{ fontSize: 23, fontWeight: 800, color: 'var(--blue)', fontVariantNumeric: 'tabular-nums' }}>
+                        {money(totalFactura)}
+                      </span>
                     </div>
                   ) : (
                     <span />
@@ -532,13 +543,13 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
         const esFactura = confirmAction.type === 'factura';
         const rows: [string, string][] = esFactura
           ? [
-              ['Nº Factura', r.facturaNro || '—'],
-              ['Nº Remito', r.remitoNro || '—'],
+              ['Nº Factura', formatNroComprobante(r.facturaNro)],
+              ['Nº Remito', formatNroComprobante(r.remitoNro)],
               ['Proveedor', provName(r)],
               ['Total', money(totalFacturaOf(r))],
             ]
           : [
-              ['Nº Remito', r.remitoNro || '—'],
+              ['Nº Remito', formatNroComprobante(r.remitoNro)],
               ['Proveedor', provName(r)],
               ['Items', String(totalUnidades(r, getSelected(r)))],
             ];
@@ -623,7 +634,8 @@ function EcoInline({ k, v, sep }: { k: string; v: string; sep?: boolean }) {
   return (
     <span style={{ whiteSpace: 'nowrap' }}>
       {sep && <span style={{ color: 'var(--muted-3)', marginRight: 8 }}>·</span>}
-      {k} <b style={{ fontWeight: 700, color: 'var(--ink-2)', fontVariantNumeric: 'tabular-nums' }}>{v}</b>
+      {k}{' '}
+      <b style={{ fontWeight: 700, color: 'var(--ink-2)', fontVariantNumeric: 'tabular-nums' }}>{v}</b>
     </span>
   );
 }
@@ -632,7 +644,14 @@ function HeadCell({ label, value, big }: { label: string; value: string; big?: b
   return (
     <div>
       <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.5px', color: 'var(--muted-2)' }}>{label}</div>
-      <div style={{ fontSize: big ? 22 : 16, fontWeight: big ? 800 : 700, color: big ? 'var(--navy)' : 'var(--ink-2)', letterSpacing: big ? '.3px' : undefined }}>
+      <div
+        style={{
+          fontSize: big ? 22 : 16,
+          fontWeight: big ? 800 : 700,
+          color: big ? 'var(--navy)' : 'var(--ink-2)',
+          letterSpacing: big ? '.3px' : undefined,
+        }}
+      >
         {value}
       </div>
     </div>

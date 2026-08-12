@@ -12,6 +12,7 @@ export const proveedoresApi = {
       nombre: input.nombre.trim(),
       razonSocial: input.razonSocial.trim(),
       cuit: soloDigitos(input.cuit),
+      codigoERP: input.codigoERP.trim(),
     }),
   // El PATCH sólo acepta nombre: razonSocial y cuit son datos legales ya
   // impresos en remitos históricos, el backend rechaza el resto con 400.

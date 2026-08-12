@@ -1,9 +1,9 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useData } from '../context/data-context';
 import { useAuth } from '../context/auth-context';
 import { permsFor } from '../utils/roles';
 import { createFactura } from '../api/facturas';
-import { remitosApi } from '../api/remitos';
+import { remitosApi, type UpdateItemsInput } from '../api/remitos';
 import { approveFactura } from '../api/facturas';
 import { ApiError } from '../api/client';
 import { STAGES_EXTRACCION, useProceso } from '../hooks/useProceso';
@@ -13,9 +13,13 @@ import { money } from '../utils/money';
 import { round2, toNumero } from '../utils/numero';
 import { colorFor } from '../utils/colors';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { formatNroComprobante, normalizarNroComprobante } from '../utils/comprobante';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 
 type Status = 'idle' | 'uploading' | 'processing' | 'done' | 'error';
+
+/** Montos de cabecera editables de un remito. */
+type MontoRemito = 'subtotal' | 'iva' | 'percepciones' | 'descuentos' | 'total';
 
 interface Props {
   tipoComp: RemitoTipo;
@@ -43,24 +47,33 @@ function loadStored(key: string): Remito[] {
 const toCantidad = toNumero;
 const toPrecio = toNumero;
 
-// Recalcula el total por artículo (cantidad × precio), el subtotal (Σ totales) y el total
-// del remito. El IVA se recalcula proporcional a la alícuota efectiva original (iva/subtotal
-// del snapshot), dejando percepciones y bonificaciones fijas. Estos montos son los que se
-// mandan en el PATCH al procesar (ver handleProcesar).
-function recalcRemito(r: Remito, orig?: Remito): Remito {
-  const articulos = (r.articulos ?? []).map((a) => ({
-    ...a,
-    total_unitario: round2(toCantidad(a.cantidad) * toPrecio(a.precio_unitario)),
-  }));
-  const subtotal = round2(articulos.reduce((acc, a) => acc + Number(a.total_unitario || 0), 0));
-  const refSubtotal = Number(orig?.subtotal ?? r.subtotal ?? 0);
-  const refIva = Number(orig?.iva ?? r.iva ?? 0);
-  const rate = refSubtotal > 0 ? refIva / refSubtotal : 0;
-  const iva = round2(subtotal * rate);
-  const percepciones = Number(r.percepciones || 0);
-  const descuentos = Number(r.descuentos || 0);
-  const total = round2(subtotal - descuentos + percepciones + iva);
-  return { ...r, articulos, subtotal, iva, total };
+/**
+ * Recálculo en cascada, SIEMPRE hacia abajo.
+ *
+ * El valor por defecto de cada monto es lo que devolvió el LLM. Editar un campo propaga
+ * únicamente a sus derivados de "más abajo" en la jerarquía, y nunca hacia arriba:
+ *
+ *   cantidad/precio (línea) → total de esa línea → subtotal → total
+ *   total de línea (manual) → subtotal → total
+ *   subtotal (manual)       → total
+ *   bonif/percep/IVA (manual) → total
+ *   total (manual)          → nada
+ *
+ * El IVA es un valor independiente: no se re-deriva solo (antes se recalculaba por
+ * alícuota, lo que pisaba el valor del LLM). Si un campo editado a mano deja de coincidir
+ * con su cálculo (p. ej. el subtotal no da con la suma de las líneas), NO se corrige
+ * solo: queda lo que puso el operador.
+ *
+ * `sumaLineas`/`totalDe` son los dos únicos recálculos, y cada handler llama sólo los
+ * que correspondan a la dirección de la edición.
+ */
+function sumaLineas(articulos: Articulo[]): number {
+  return round2(articulos.reduce((acc, a) => acc + toNumero(a.total_unitario), 0));
+}
+
+/** total = subtotal − bonificaciones + percepciones + IVA, con los valores actuales. */
+function totalDe(r: Remito): number {
+  return round2(toNumero(r.subtotal) - toNumero(r.descuentos) + toNumero(r.percepciones) + toNumero(r.iva));
 }
 
 export function NuevoPage({ tipoComp, onGoConfig }: Props) {
@@ -88,6 +101,9 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
   const [remitoSel, setRemitoSel] = useState<string | null>(null);
   const [editCell, setEditCell] = useState<{ remitoId: string; itemId: string; field: keyof Articulo } | null>(null);
   const [editHeader, setEditHeader] = useState<{ id: string; field: 'facturaNro' | 'remitoNro' } | null>(null);
+  // Edición de un monto de cabecera (subtotal/iva/percepciones/descuentos/total) del
+  // remito. Sólo se habilita cuando hay un único remito en `scope`.
+  const [editAmount, setEditAmount] = useState<{ remitoId: string; field: MontoRemito } | null>(null);
   const [approving, setApproving] = useState(false);
   const [confirmProcesar, setConfirmProcesar] = useState(false);
   const [discarding, setDiscarding] = useState(false);
@@ -262,24 +278,59 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
     return { subtotal, percepciones, descuentos, iva, total };
   }, [scope]);
 
-  // Detección de ediciones: comparamos cada remito contra su snapshot original.
+  // Los montos de cabecera sólo se editan cuando hay un único remito: con varios, el pie
+  // muestra la SUMA y editar un agregado no mapea a ningún remito concreto.
+  const remitoUnico = scope.length === 1 ? scope[0] : null;
+
+  // Snapshot original de cada remito: sirve para detectar ediciones (qué mandar en el
+  // PATCH) y como referencia de la alícuota de IVA al recalcular.
   const originalById = useMemo(
     () => Object.fromEntries(originalRemitos.map((r) => [r.id, r])),
     [originalRemitos],
   );
-  const isDirty = (r: Remito): boolean => {
-    const orig = originalById[r.id];
-    return !orig || JSON.stringify(r) !== JSON.stringify(orig);
-  };
-
   function updateArticuloLocal(remitoId: string, articuloId: string, field: keyof Articulo, value: string) {
+    const afectaMontos = field === 'cantidad' || field === 'precio_unitario';
     setRemitosCargados((prev) =>
       prev.map((r) => {
         if (r.id !== remitoId) return r;
-        const articulos = (r.articulos ?? []).map((a) => (a.id !== articuloId ? a : { ...a, [field]: value }));
-        const updated = { ...r, articulos };
-        // Editar cantidad/precio recalcula total del artículo, subtotal, IVA y total del remito.
-        return field === 'cantidad' || field === 'precio_unitario' ? recalcRemito(updated, originalById[remitoId]) : updated;
+        const articulos = (r.articulos ?? []).map((a) => {
+          if (a.id !== articuloId) return a;
+          const na = { ...a, [field]: value };
+          // Cantidad/precio recalculan el total de ESA línea (cascada hacia abajo).
+          if (afectaMontos) na.total_unitario = round2(toCantidad(na.cantidad) * toPrecio(na.precio_unitario));
+          return na;
+        });
+        if (!afectaMontos) return { ...r, articulos }; // nombre/código: no toca montos
+        // total de línea → subtotal → total. IVA/bonif/percep quedan como están.
+        const conSub = { ...r, articulos, subtotal: sumaLineas(articulos) };
+        return { ...conSub, total: totalDe(conSub) };
+      }),
+    );
+  }
+
+  // Edición manual del total de una línea. Cascada hacia abajo: subtotal → total.
+  function editArticuloTotal(remitoId: string, articuloId: string, value: string) {
+    setRemitosCargados((prev) =>
+      prev.map((r) => {
+        if (r.id !== remitoId) return r;
+        const articulos = (r.articulos ?? []).map((a) =>
+          a.id !== articuloId ? a : { ...a, total_unitario: toNumero(value) },
+        );
+        const conSub = { ...r, articulos, subtotal: sumaLineas(articulos) };
+        return { ...conSub, total: totalDe(conSub) };
+      }),
+    );
+  }
+
+  // Edición manual de un monto de cabecera. Cascada SÓLO hacia abajo:
+  //   - total → no afecta nada
+  //   - subtotal / bonificaciones / percepciones / IVA → sólo el total
+  function editRemitoAmount(remitoId: string, field: MontoRemito, value: string) {
+    setRemitosCargados((prev) =>
+      prev.map((r) => {
+        if (r.id !== remitoId) return r;
+        const actualizado = { ...r, [field]: toNumero(value) };
+        return field === 'total' ? actualizado : { ...actualizado, total: totalDe(actualizado) };
       }),
     );
   }
@@ -287,23 +338,43 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
   // Edición local (persistida en localStorage) del Nº de factura / remito.
   // facturaNro es compartido por todo el lote de un mismo comprobante (applyToAll).
   function updateRemitoField(remitoId: string, field: 'facturaNro' | 'remitoNro', value: string, applyToAll = false) {
-    setRemitosCargados((prev) => prev.map((r) => (applyToAll || r.id === remitoId ? { ...r, [field]: value } : r)));
+    // Se normaliza al confirmar la edición, no mientras se tipea: reescribir el input
+    // caracter por caracter le pelea al operador. Si no se pudo normalizar se guarda
+    // el valor crudo tal cual, en lugar de dejar el campo vacío.
+    const normalizado = normalizarNroComprobante(value) ?? value.trim();
+    setRemitosCargados((prev) =>
+      prev.map((r) => (applyToAll || r.id === remitoId ? { ...r, [field]: normalizado } : r)),
+    );
   }
 
-  async function commitEdit() {
-    const ec = editCell;
+  // Cerrar la edición de una celda no persiste nada: el valor ya se aplicó localmente
+  // (onChange → updateArticuloLocal) y sobrevive en localStorage. La persistencia al
+  // back se hace UNA sola vez al aprobar (handleProcesar), con el remito ya recalculado
+  // y sin el problema de leer un estado stale desde este callback.
+  function commitEdit() {
     setEditCell(null);
-    if (!ec) return;
-    const remito = remitosCargados.find((r) => r.id === ec.remitoId);
-    const articulo = remito?.articulos?.find((a) => a.id === ec.itemId);
-    if (!remito || !articulo) return;
-    try {
-      // Backend stub: PATCH /remitos/:id/items no persiste hoy los cambios, ver aviso en UI.
-      await remitosApi.updateItems(remito.id, remito.articulos ?? []);
-    } catch {
-      // silencioso: es un stub conocido, no bloqueamos la edición visual
-    }
   }
+
+  /**
+   * Payload para `PATCH /remitos/:id/items`.
+   *
+   * Traduce del contrato del front (`precio_unitario`, `total_unitario`) al del back
+   * (`precioUnitario`, `total`) y adjunta los montos de cabecera ya calculados, para que
+   * el back los persista en vez de recalcularlos con un modelo distinto.
+   */
+  const itemsPayloadDe = (r: Remito): UpdateItemsInput => ({
+    items: (r.articulos ?? []).map((a) => ({
+      id: a.id,
+      cantidad: toNumero(a.cantidad),
+      precioUnitario: toNumero(a.precio_unitario),
+      total: toNumero(a.total_unitario),
+    })),
+    subtotal: toNumero(r.subtotal),
+    iva: toNumero(r.iva),
+    percepciones: toNumero(r.percepciones),
+    descuentos: toNumero(r.descuentos),
+    total: toNumero(r.total),
+  });
 
   async function handleProcesar() {
     if (scope.length === 0) return;
@@ -318,20 +389,37 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
       // remito de otra empresa sobrescribía esa fila. Ahora el back rechaza con 400
       // cualquier campo no editable, así que mandar de más sería un error.
       //
-      // Los montos NO van acá: se derivan de los artículos vía
-      // `PATCH /remitos/:id/items`.
-      const editados = scope.filter(isDirty);
+      // Los montos y los ítems van por `PATCH /remitos/:id/items` (ver más abajo), no
+      // en este PATCH de cabecera.
+      //
+      // Los números viajan NORMALIZADOS (sólo dígitos, con los ceros a la izquierda
+      // completados): los separadores son presentación, no dato. Sin esto el mismo
+      // comprobante entra a la base como `1-234`, `0001-00000234` y `000100000234`
+      // según cómo lo haya impreso el proveedor, y cualquier cruce posterior falla
+      // por una diferencia que no existe (ver utils/comprobante.ts).
+      const payloadDe = (r: Remito) => ({
+        remitoNro: normalizarNroComprobante(r.remitoNro) ?? r.remitoNro,
+        facturaNro: normalizarNroComprobante(r.facturaNro) ?? r.facturaNro,
+        fecha: r.fecha,
+      });
+      // Se compara el PAYLOAD contra el original, no el remito entero: `isDirty` mira
+      // el JSON completo (incluidos los artículos, que no van en este PATCH) y además
+      // no ve el caso "no lo editaron pero la normalización lo cambia".
+      const editados = scope.filter((r) => {
+        const orig = originalById[r.id];
+        if (!orig) return true;
+        const p = payloadDe(r);
+        return p.remitoNro !== orig.remitoNro || p.facturaNro !== orig.facturaNro || p.fecha !== orig.fecha;
+      });
       if (editados.length) {
-        await Promise.all(
-          editados.map((r) =>
-            remitosApi.update(r.id, {
-              remitoNro: r.remitoNro,
-              facturaNro: r.facturaNro,
-              fecha: r.fecha,
-            }),
-          ),
-        );
+        await Promise.all(editados.map((r) => remitosApi.update(r.id, payloadDe(r))));
       }
+      // Persistimos ítems y montos (cantidades, precios, subtotal/IVA/percep/bonif/total)
+      // ANTES de aprobar: la validación contra la orden de compra que dispara el submit
+      // corre sobre los artículos ya guardados, y el webhook al cliente lee estos montos.
+      // Se manda una sola vez por remito con lo que quedó en pantalla (ya recalculado),
+      // en vez de un PATCH por cada tecla como antes (que además mandaba mal los campos).
+      await Promise.all(scope.map((r) => remitosApi.updateItems(r.id, itemsPayloadDe(r))));
       await Promise.all(scope.map((r) => approveFactura(r.id)));
       setSuccessMsg('Comprobante(s) aprobado(s) correctamente.');
       setRemitosCargados([]);
@@ -651,9 +739,22 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
                       onCommit={commitEdit}
                       align="right"
                     />
-                    <span style={{ textAlign: 'right', fontWeight: 600, color: 'var(--ink-2)' }} title="Se calcula automáticamente">
-                      {money(articulo.total_unitario ?? round2(toCantidad(articulo.cantidad) * toPrecio(articulo.precio_unitario)))}
-                    </span>
+                    {/*
+                      El total de línea por defecto es cantidad × precio (o el valor del
+                      LLM) y se recalcula solo, pero es editable como última instancia:
+                      al editarlo queda lockeado y deja de recalcularse (ver
+                      editArticuloTotal).
+                    */}
+                    <EditableCell
+                      value={money(articulo.total_unitario ?? round2(toCantidad(articulo.cantidad) * toPrecio(articulo.precio_unitario)))}
+                      rawValue={String(articulo.total_unitario ?? '')}
+                      editing={editCell?.itemId === articulo.id && editCell.field === 'total_unitario'}
+                      onStartEdit={() => setEditCell({ remitoId, itemId: articulo.id, field: 'total_unitario' })}
+                      onChange={(v) => editArticuloTotal(remitoId, articulo.id, v.replace(/[^0-9.,]/g, ''))}
+                      onCommit={commitEdit}
+                      align="right"
+                      bold
+                    />
                   </div>
                 );
               })}
@@ -668,6 +769,7 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
               {editHeader?.field === 'facturaNro' ? (
                 <input
                   autoFocus
+                  placeholder="0001-00000234"
                   defaultValue={remitosCargados[0]?.facturaNro ?? ''}
                   onBlur={(e) => {
                     updateRemitoField(remitosCargados[0]?.id ?? '', 'facturaNro', e.target.value, true);
@@ -683,13 +785,12 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
                   style={headerInputStyle}
                 />
               ) : (
-                <div
+                <ReadonlyBox
                   onDoubleClick={() => remitosCargados.length > 0 && setEditHeader({ id: remitosCargados[0].id, field: 'facturaNro' })}
-                  title="Doble clic para editar"
-                  style={{ ...readonlyBoxStyle, cursor: remitosCargados.length > 0 ? 'text' : 'default' }}
+                  editable={remitosCargados.length > 0}
                 >
-                  {remitosCargados[0]?.facturaNro || '—'}
-                </div>
+                  {formatNroComprobante(remitosCargados[0]?.facturaNro)}
+                </ReadonlyBox>
               )}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 7, minWidth: 260, flex: 1 }}>
@@ -706,6 +807,7 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
                       <input
                         key={r.id}
                         autoFocus
+                        placeholder="0001-00000234"
                         defaultValue={r.remitoNro ?? ''}
                         onBlur={(e) => {
                           updateRemitoField(r.id, 'remitoNro', e.target.value);
@@ -744,7 +846,7 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
                       }}
                     >
                       <span style={{ width: 9, height: 9, flex: 'none', borderRadius: '50%', background: color }} />
-                      <span>{r.remitoNro || '(sin número)'}</span>
+                      <span>{r.remitoNro ? formatNroComprobante(r.remitoNro) : '(sin número)'}</span>
                     </button>
                   );
                 })}
@@ -754,15 +856,63 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
           <div style={{ minWidth: 260, display: 'flex', flexDirection: 'column', gap: 9 }}>
             {tipoComp === 'factura' && (
               <>
-                <TotalLine k="Subtotal:" v={money(totals.subtotal)} />
-                {totals.descuentos > 0 && <TotalLine k="Bonificaciones:" v={'- ' + money(totals.descuentos)} />}
-                <TotalLine k="Percepciones" v={money(totals.percepciones)} />
-                <TotalLine k="IVA:" v={money(totals.iva)} />
+                {/*
+                  Cada monto por defecto es lo que devolvió el LLM y se recalcula solo,
+                  pero es editable como última instancia cuando hay un único remito (doble
+                  clic). Con varios remitos se muestra la SUMA, sin edición.
+                */}
+                <EditableAmount
+                  label="Subtotal:"
+                  value={money(totals.subtotal)}
+                  rawValue={remitoUnico ? String(remitoUnico.subtotal ?? '') : undefined}
+                  editable={!!remitoUnico}
+                  editing={editAmount?.field === 'subtotal'}
+                  onStartEdit={() => remitoUnico && setEditAmount({ remitoId: remitoUnico.id, field: 'subtotal' })}
+                  onChange={(v) => remitoUnico && editRemitoAmount(remitoUnico.id, 'subtotal', v)}
+                  onCommit={() => setEditAmount(null)}
+                />
+                <EditableAmount
+                  label="Bonificaciones:"
+                  value={(totals.descuentos > 0 ? '- ' : '') + money(totals.descuentos)}
+                  rawValue={remitoUnico ? String(remitoUnico.descuentos ?? '') : undefined}
+                  editable={!!remitoUnico}
+                  editing={editAmount?.field === 'descuentos'}
+                  onStartEdit={() => remitoUnico && setEditAmount({ remitoId: remitoUnico.id, field: 'descuentos' })}
+                  onChange={(v) => remitoUnico && editRemitoAmount(remitoUnico.id, 'descuentos', v)}
+                  onCommit={() => setEditAmount(null)}
+                />
+                <EditableAmount
+                  label="Percepciones:"
+                  value={money(totals.percepciones)}
+                  rawValue={remitoUnico ? String(remitoUnico.percepciones ?? '') : undefined}
+                  editable={!!remitoUnico}
+                  editing={editAmount?.field === 'percepciones'}
+                  onStartEdit={() => remitoUnico && setEditAmount({ remitoId: remitoUnico.id, field: 'percepciones' })}
+                  onChange={(v) => remitoUnico && editRemitoAmount(remitoUnico.id, 'percepciones', v)}
+                  onCommit={() => setEditAmount(null)}
+                />
+                <EditableAmount
+                  label="IVA:"
+                  value={money(totals.iva)}
+                  rawValue={remitoUnico ? String(remitoUnico.iva ?? '') : undefined}
+                  editable={!!remitoUnico}
+                  editing={editAmount?.field === 'iva'}
+                  onStartEdit={() => remitoUnico && setEditAmount({ remitoId: remitoUnico.id, field: 'iva' })}
+                  onChange={(v) => remitoUnico && editRemitoAmount(remitoUnico.id, 'iva', v)}
+                  onCommit={() => setEditAmount(null)}
+                />
                 <div style={{ height: 1, background: '#eef1f6', margin: '4px 0' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 19, fontWeight: 800, color: 'var(--blue)' }}>
-                  <span>Total:</span>
-                  <span>{money(totals.total)}</span>
-                </div>
+                <EditableAmount
+                  label="Total:"
+                  value={money(totals.total)}
+                  rawValue={remitoUnico ? String(remitoUnico.total ?? '') : undefined}
+                  editable={!!remitoUnico}
+                  editing={editAmount?.field === 'total'}
+                  onStartEdit={() => remitoUnico && setEditAmount({ remitoId: remitoUnico.id, field: 'total' })}
+                  onChange={(v) => remitoUnico && editRemitoAmount(remitoUnico.id, 'total', v)}
+                  onCommit={() => setEditAmount(null)}
+                  big
+                />
               </>
             )}
             <button
@@ -790,8 +940,8 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
           const single = scope.length === 1 ? scope[0] : null;
           const rows: [string, string][] = single
             ? [
-                ['Nº Factura', single.facturaNro || '—'],
-                ['Nº Remito', single.remitoNro || '—'],
+                ['Nº Factura', formatNroComprobante(single.facturaNro)],
+                ['Nº Remito', formatNroComprobante(single.remitoNro)],
                 ['Proveedor', provNombre],
                 ['Total', money(totals.total)],
               ]
@@ -828,11 +978,69 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
   );
 }
 
-function TotalLine({ k, v }: { k: string; v: string }) {
+interface EditableAmountProps {
+  label: string;
+  value: string;
+  /** Valor numérico crudo para el input (sin formato de moneda). */
+  rawValue?: string;
+  editable: boolean;
+  editing: boolean;
+  onStartEdit: () => void;
+  onChange: (v: string) => void;
+  onCommit: () => void;
+  /** Fila de total (grande y en azul). */
+  big?: boolean;
+}
+
+/**
+ * Fila de un monto del pie de factura. Muestra el valor formateado; con doble clic (si
+ * `editable`) pasa a input para el override manual.
+ */
+function EditableAmount({ label, value, rawValue, editable, editing, onStartEdit, onChange, onCommit, big }: EditableAmountProps) {
+  const filaStyle: CSSProperties = big
+    ? { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 19, fontWeight: 800, color: 'var(--blue)' }
+    : { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 14, color: 'var(--muted)' };
+
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, color: 'var(--muted)' }}>
-      <span>{k}</span>
-      <span>{v}</span>
+    <div style={filaStyle}>
+      <span>{label}</span>
+      {editing ? (
+        <input
+          autoFocus
+          defaultValue={rawValue ?? ''}
+          onChange={(e) => onChange(e.target.value.replace(/[^0-9.,]/g, ''))}
+          onBlur={onCommit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === 'Escape') (e.target as HTMLInputElement).blur();
+          }}
+          style={{
+            width: 130,
+            height: 30,
+            border: '1px solid var(--blue)',
+            borderRadius: 6,
+            padding: '0 8px',
+            fontSize: big ? 16 : 13.5,
+            fontWeight: big ? 800 : 600,
+            color: 'var(--ink)',
+            outline: 'none',
+            background: '#fff',
+            textAlign: 'right',
+          }}
+        />
+      ) : (
+        <span
+          onDoubleClick={editable ? onStartEdit : undefined}
+          title={editable ? 'Doble clic para editar' : undefined}
+          style={{
+            fontVariantNumeric: 'tabular-nums',
+            color: big ? 'var(--blue)' : 'var(--ink-2)',
+            cursor: editable ? 'text' : 'default',
+            fontWeight: big ? 800 : 600,
+          }}
+        >
+          {value}
+        </span>
+      )}
     </div>
   );
 }
@@ -881,6 +1089,11 @@ function EditableCell({ value, rawValue, editing, onStartEdit, onChange, onCommi
       onDoubleClick={onStartEdit}
       title="Doble clic para editar"
       style={{
+        // En las columnas numéricas (align derecha) el span ocupa toda la celda para que
+        // el valor quede alineado con el encabezado de la columna. En las de la izquierda
+        // (código/nombre) se deja el comportamiento inline original (ellipsis, etc.).
+        display: align === 'right' ? 'block' : undefined,
+        width: align === 'right' ? '100%' : undefined,
         textAlign: align,
         fontVariantNumeric: 'tabular-nums',
         fontWeight: bold ? 700 : undefined,
@@ -894,6 +1107,32 @@ function EditableCell({ value, rawValue, editing, onStartEdit, onChange, onCommi
     >
       {value}
     </span>
+  );
+}
+
+/** Caja de sólo lectura (Nº de factura) con doble clic para editar. */
+function ReadonlyBox({
+  children,
+  onDoubleClick,
+  editable,
+}: {
+  children: ReactNode;
+  onDoubleClick: () => void;
+  editable: boolean;
+}) {
+  return (
+    <div
+      onDoubleClick={onDoubleClick}
+      title={editable ? 'Doble clic para editar' : undefined}
+      style={{
+        ...readonlyBoxStyle,
+        cursor: editable ? 'text' : 'default',
+        borderColor: 'var(--border-2)',
+        color: 'var(--ink)',
+      }}
+    >
+      {children}
+    </div>
   );
 }
 

@@ -110,6 +110,7 @@ export interface CreateProveedorInput {
   razonSocial: string;
   /** Se manda en dígitos, sin la máscara. */
   cuit: string;
+  codigoERP: string; // opcional, null en los proveedores cargados antes del campo
 }
 
 export interface Sucursal {

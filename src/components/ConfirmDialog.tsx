@@ -43,7 +43,7 @@ export function ConfirmDialog({
           boxShadow: '0 20px 50px rgba(15,23,42,.25)', overflow: 'hidden',
         }}
       >
-        <div style={{ padding: '20px 22px 8px' }}>
+        <div style={{ padding: '20px 22px 8px', maxHeight: '70vh', overflowY: 'auto' }}>
           <div style={{ fontSize: 17, fontWeight: 800, color: 'var(--ink)' }}>{title}</div>
           {message && <div style={{ marginTop: 8, fontSize: 14, color: 'var(--muted)', lineHeight: 1.45 }}>{message}</div>}
         </div>
@@ -64,7 +64,8 @@ export function ConfirmDialog({
             disabled={busy}
             style={{
               height: 40, padding: '0 18px', borderRadius: 8, border: 'none',
-              background: danger ? 'var(--err)' : 'var(--ok)', color: '#fff', fontWeight: 700, fontSize: 14,
+              background: danger ? 'var(--err)' : 'var(--ok)',
+              color: '#fff', fontWeight: 700, fontSize: 14,
               cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.7 : 1,
             }}
           >
