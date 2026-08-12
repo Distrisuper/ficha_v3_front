@@ -28,7 +28,7 @@ export function Tooltip({
   texto: ReactNode;
   children: ReactNode;
   ancho?: number;
-  /** Color de fondo de la burbuja (azul por defecto, ámbar para advertencias). */
+  /** Color de fondo de la burbuja. */
   fondo?: string;
   /** Estilo de la burbuja. */
   style?: CSSProperties;

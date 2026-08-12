@@ -8,14 +8,6 @@ interface Props {
   cancelLabel?: string;
   danger?: boolean; // botón de confirmar en rojo (borrados)
   busy?: boolean;
-  /**
-   * Deshabilita SÓLO el botón de confirmar, dejando el modal abierto y legible.
-   *
-   * Existe para el caso "hay algo que corregir": el operador tiene que poder abrir el
-   * modal y leer la lista de problemas. Bloquear el botón que abre el modal escondería
-   * justamente la explicación de por qué está bloqueado.
-   */
-  confirmDisabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -29,7 +21,6 @@ export function ConfirmDialog({
   cancelLabel = 'Cancelar',
   danger,
   busy,
-  confirmDisabled,
   onConfirm,
   onCancel,
 }: Props) {
@@ -70,13 +61,12 @@ export function ConfirmDialog({
           </button>
           <button
             onClick={onConfirm}
-            disabled={busy || confirmDisabled}
-            title={confirmDisabled ? 'Corregí los problemas listados para poder continuar' : undefined}
+            disabled={busy}
             style={{
               height: 40, padding: '0 18px', borderRadius: 8, border: 'none',
-              background: confirmDisabled ? '#8a94a6' : danger ? 'var(--err)' : 'var(--ok)',
+              background: danger ? 'var(--err)' : 'var(--ok)',
               color: '#fff', fontWeight: 700, fontSize: 14,
-              cursor: busy || confirmDisabled ? 'not-allowed' : 'pointer', opacity: busy ? 0.7 : 1,
+              cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.7 : 1,
             }}
           >
             {busy ? 'Procesando…' : confirmLabel}

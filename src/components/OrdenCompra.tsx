@@ -125,9 +125,8 @@ function estadoDeFlag(flag: boolean | null | undefined): EstadoMatch {
 const ANCHO_TOOLTIP = 220;
 
 /**
- * Icono del semáforo con su tooltip. La burbuja `fixed` la resuelve `Tooltip`
- * (compartido con las advertencias por campo); acá sólo se le da la caja de color
- * según la paleta del estado.
+ * Icono del semáforo con su tooltip. La burbuja `fixed` la resuelve `Tooltip`;
+ * acá sólo se le da la caja de color según la paleta del estado.
  */
 function IconoConTooltip({
   estado,
