@@ -1,9 +1,9 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useData } from '../context/data-context';
 import { useAuth } from '../context/auth-context';
 import { permsFor } from '../utils/roles';
 import { createFactura } from '../api/facturas';
-import { remitosApi } from '../api/remitos';
+import { remitosApi, type UpdateItemsInput } from '../api/remitos';
 import { approveFactura } from '../api/facturas';
 import { ApiError } from '../api/client';
 import { STAGES_EXTRACCION, useProceso } from '../hooks/useProceso';
@@ -14,11 +14,25 @@ import { round2, toNumero } from '../utils/numero';
 import { colorFor } from '../utils/colors';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { PanelAdvertencias } from '../components/PanelAdvertencias';
+import { Tooltip } from '../components/Tooltip';
 import { formatNroComprobante, normalizarNroComprobante } from '../utils/comprobante';
-import { soloAvisos, soloErrores, validarLote } from '../utils/validacionFactura';
+import {
+  claveCampo,
+  indexarPorCampo,
+  soloAvisos,
+  soloErrores,
+  validarLote,
+  type CampoAdvertencia,
+} from '../utils/validacionFactura';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 
+// Color de fondo de la burbuja de advertencia (ámbar oscuro, legible con texto blanco).
+const TOOLTIP_WARN_BG = '#8a6410';
+
 type Status = 'idle' | 'uploading' | 'processing' | 'done' | 'error';
+
+/** Montos de cabecera editables de un remito. */
+type MontoRemito = 'subtotal' | 'iva' | 'percepciones' | 'descuentos' | 'total';
 
 interface Props {
   tipoComp: RemitoTipo;
@@ -46,24 +60,33 @@ function loadStored(key: string): Remito[] {
 const toCantidad = toNumero;
 const toPrecio = toNumero;
 
-// Recalcula el total por artículo (cantidad × precio), el subtotal (Σ totales) y el total
-// del remito. El IVA se recalcula proporcional a la alícuota efectiva original (iva/subtotal
-// del snapshot), dejando percepciones y bonificaciones fijas. Estos montos son los que se
-// mandan en el PATCH al procesar (ver handleProcesar).
-function recalcRemito(r: Remito, orig?: Remito): Remito {
-  const articulos = (r.articulos ?? []).map((a) => ({
-    ...a,
-    total_unitario: round2(toCantidad(a.cantidad) * toPrecio(a.precio_unitario)),
-  }));
-  const subtotal = round2(articulos.reduce((acc, a) => acc + Number(a.total_unitario || 0), 0));
-  const refSubtotal = Number(orig?.subtotal ?? r.subtotal ?? 0);
-  const refIva = Number(orig?.iva ?? r.iva ?? 0);
-  const rate = refSubtotal > 0 ? refIva / refSubtotal : 0;
-  const iva = round2(subtotal * rate);
-  const percepciones = Number(r.percepciones || 0);
-  const descuentos = Number(r.descuentos || 0);
-  const total = round2(subtotal - descuentos + percepciones + iva);
-  return { ...r, articulos, subtotal, iva, total };
+/**
+ * Recálculo en cascada, SIEMPRE hacia abajo.
+ *
+ * El valor por defecto de cada monto es lo que devolvió el LLM. Editar un campo propaga
+ * únicamente a sus derivados de "más abajo" en la jerarquía, y nunca hacia arriba:
+ *
+ *   cantidad/precio (línea) → total de esa línea → subtotal → total
+ *   total de línea (manual) → subtotal → total
+ *   subtotal (manual)       → total
+ *   bonif/percep/IVA (manual) → total
+ *   total (manual)          → nada
+ *
+ * El IVA es un valor independiente: no se re-deriva solo (antes se recalculaba por
+ * alícuota, lo que pisaba el valor del LLM). Si un campo editado a mano deja de coincidir
+ * con su cálculo (p. ej. el subtotal no da con la suma de las líneas), NO se corrige
+ * solo: se marca en amarillo desde la validación (`math-subtotal`, `math-total`, etc.).
+ *
+ * `sumaLineas`/`totalDe` son los dos únicos recálculos, y cada handler llama sólo los
+ * que correspondan a la dirección de la edición.
+ */
+function sumaLineas(articulos: Articulo[]): number {
+  return round2(articulos.reduce((acc, a) => acc + toNumero(a.total_unitario), 0));
+}
+
+/** total = subtotal − bonificaciones + percepciones + IVA, con los valores actuales. */
+function totalDe(r: Remito): number {
+  return round2(toNumero(r.subtotal) - toNumero(r.descuentos) + toNumero(r.percepciones) + toNumero(r.iva));
 }
 
 export function NuevoPage({ tipoComp, onGoConfig }: Props) {
@@ -91,6 +114,9 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
   const [remitoSel, setRemitoSel] = useState<string | null>(null);
   const [editCell, setEditCell] = useState<{ remitoId: string; itemId: string; field: keyof Articulo } | null>(null);
   const [editHeader, setEditHeader] = useState<{ id: string; field: 'facturaNro' | 'remitoNro' } | null>(null);
+  // Edición de un monto de cabecera (subtotal/iva/percepciones/descuentos/total) del
+  // remito. Sólo se habilita cuando hay un único remito en `scope`.
+  const [editAmount, setEditAmount] = useState<{ remitoId: string; field: MontoRemito } | null>(null);
   const [approving, setApproving] = useState(false);
   const [confirmProcesar, setConfirmProcesar] = useState(false);
   const [discarding, setDiscarding] = useState(false);
@@ -271,8 +297,24 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
   const advertencias = useMemo(() => validarLote(scope), [scope]);
   const errores = useMemo(() => soloErrores(advertencias), [advertencias]);
   const avisos = useMemo(() => soloAvisos(advertencias), [advertencias]);
-  // Bloqueo duro: mientras haya un error el comprobante no se manda.
+  // Bloqueo duro: sólo los `error` (Nº vacío, código faltante, importe base en cero)
+  // frenan la carga. Los `aviso` (formato, descalces, importes en cero) marcan el campo
+  // en amarillo pero se pueden cargar igual.
   const bloqueadoPorValidacion = errores.length > 0;
+  // Hay algo para revisar (bloqueante o no): cambia el color y el texto del botón.
+  const hayAdvertencias = advertencias.length > 0;
+
+  // Índice campo → mensajes, para pintar de amarillo cada input/celda con su tooltip.
+  const advIndex = useMemo(() => indexarPorCampo(advertencias), [advertencias]);
+  const warnArt = (remitoId: string, articuloId: string, campo: CampoAdvertencia): string[] =>
+    (advIndex.get(claveCampo(remitoId, campo, articuloId)) ?? []).map((a) => a.mensaje);
+  const warnRem = (remitoId: string, campo: CampoAdvertencia): string[] =>
+    (advIndex.get(claveCampo(remitoId, campo)) ?? []).map((a) => a.mensaje);
+  // El Nº de factura es compartido por todo el lote: junto los avisos de todos los remitos.
+  const warnFactura = scope.flatMap((r) => warnRem(r.id, 'facturaNro'));
+  // Los montos de cabecera sólo se editan cuando hay un único remito: con varios, el pie
+  // muestra la SUMA y editar un agregado no mapea a ningún remito concreto.
+  const remitoUnico = scope.length === 1 ? scope[0] : null;
 
   // Snapshot original de cada remito: sirve para detectar ediciones (qué mandar en el
   // PATCH) y como referencia de la alícuota de IVA al recalcular.
@@ -281,13 +323,48 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
     [originalRemitos],
   );
   function updateArticuloLocal(remitoId: string, articuloId: string, field: keyof Articulo, value: string) {
+    const afectaMontos = field === 'cantidad' || field === 'precio_unitario';
     setRemitosCargados((prev) =>
       prev.map((r) => {
         if (r.id !== remitoId) return r;
-        const articulos = (r.articulos ?? []).map((a) => (a.id !== articuloId ? a : { ...a, [field]: value }));
-        const updated = { ...r, articulos };
-        // Editar cantidad/precio recalcula total del artículo, subtotal, IVA y total del remito.
-        return field === 'cantidad' || field === 'precio_unitario' ? recalcRemito(updated, originalById[remitoId]) : updated;
+        const articulos = (r.articulos ?? []).map((a) => {
+          if (a.id !== articuloId) return a;
+          const na = { ...a, [field]: value };
+          // Cantidad/precio recalculan el total de ESA línea (cascada hacia abajo).
+          if (afectaMontos) na.total_unitario = round2(toCantidad(na.cantidad) * toPrecio(na.precio_unitario));
+          return na;
+        });
+        if (!afectaMontos) return { ...r, articulos }; // nombre/código: no toca montos
+        // total de línea → subtotal → total. IVA/bonif/percep quedan como están.
+        const conSub = { ...r, articulos, subtotal: sumaLineas(articulos) };
+        return { ...conSub, total: totalDe(conSub) };
+      }),
+    );
+  }
+
+  // Edición manual del total de una línea. Cascada hacia abajo: subtotal → total.
+  function editArticuloTotal(remitoId: string, articuloId: string, value: string) {
+    setRemitosCargados((prev) =>
+      prev.map((r) => {
+        if (r.id !== remitoId) return r;
+        const articulos = (r.articulos ?? []).map((a) =>
+          a.id !== articuloId ? a : { ...a, total_unitario: toNumero(value) },
+        );
+        const conSub = { ...r, articulos, subtotal: sumaLineas(articulos) };
+        return { ...conSub, total: totalDe(conSub) };
+      }),
+    );
+  }
+
+  // Edición manual de un monto de cabecera. Cascada SÓLO hacia abajo:
+  //   - total → no afecta nada
+  //   - subtotal / bonificaciones / percepciones / IVA → sólo el total
+  function editRemitoAmount(remitoId: string, field: MontoRemito, value: string) {
+    setRemitosCargados((prev) =>
+      prev.map((r) => {
+        if (r.id !== remitoId) return r;
+        const actualizado = { ...r, [field]: toNumero(value) };
+        return field === 'total' ? actualizado : { ...actualizado, total: totalDe(actualizado) };
       }),
     );
   }
@@ -305,20 +382,34 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
     );
   }
 
-  async function commitEdit() {
-    const ec = editCell;
+  // Cerrar la edición de una celda no persiste nada: el valor ya se aplicó localmente
+  // (onChange → updateArticuloLocal) y sobrevive en localStorage. La persistencia al
+  // back se hace UNA sola vez al aprobar (handleProcesar), con el remito ya recalculado
+  // y sin el problema de leer un estado stale desde este callback.
+  function commitEdit() {
     setEditCell(null);
-    if (!ec) return;
-    const remito = remitosCargados.find((r) => r.id === ec.remitoId);
-    const articulo = remito?.articulos?.find((a) => a.id === ec.itemId);
-    if (!remito || !articulo) return;
-    try {
-      // Backend stub: PATCH /remitos/:id/items no persiste hoy los cambios, ver aviso en UI.
-      await remitosApi.updateItems(remito.id, remito.articulos ?? []);
-    } catch {
-      // silencioso: es un stub conocido, no bloqueamos la edición visual
-    }
   }
+
+  /**
+   * Payload para `PATCH /remitos/:id/items`.
+   *
+   * Traduce del contrato del front (`precio_unitario`, `total_unitario`) al del back
+   * (`precioUnitario`, `total`) y adjunta los montos de cabecera ya calculados, para que
+   * el back los persista en vez de recalcularlos con un modelo distinto.
+   */
+  const itemsPayloadDe = (r: Remito): UpdateItemsInput => ({
+    items: (r.articulos ?? []).map((a) => ({
+      id: a.id,
+      cantidad: toNumero(a.cantidad),
+      precioUnitario: toNumero(a.precio_unitario),
+      total: toNumero(a.total_unitario),
+    })),
+    subtotal: toNumero(r.subtotal),
+    iva: toNumero(r.iva),
+    percepciones: toNumero(r.percepciones),
+    descuentos: toNumero(r.descuentos),
+    total: toNumero(r.total),
+  });
 
   async function handleProcesar() {
     if (scope.length === 0) return;
@@ -341,8 +432,8 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
       // remito de otra empresa sobrescribía esa fila. Ahora el back rechaza con 400
       // cualquier campo no editable, así que mandar de más sería un error.
       //
-      // Los montos NO van acá: se derivan de los artículos vía
-      // `PATCH /remitos/:id/items`.
+      // Los montos y los ítems van por `PATCH /remitos/:id/items` (ver más abajo), no
+      // en este PATCH de cabecera.
       //
       // Los números viajan NORMALIZADOS (sólo dígitos, con los ceros a la izquierda
       // completados): los separadores son presentación, no dato. Sin esto el mismo
@@ -366,6 +457,12 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
       if (editados.length) {
         await Promise.all(editados.map((r) => remitosApi.update(r.id, payloadDe(r))));
       }
+      // Persistimos ítems y montos (cantidades, precios, subtotal/IVA/percep/bonif/total)
+      // ANTES de aprobar: la validación contra la orden de compra que dispara el submit
+      // corre sobre los artículos ya guardados, y el webhook al cliente lee estos montos.
+      // Se manda una sola vez por remito con lo que quedó en pantalla (ya recalculado),
+      // en vez de un PATCH por cada tecla como antes (que además mandaba mal los campos).
+      await Promise.all(scope.map((r) => remitosApi.updateItems(r.id, itemsPayloadDe(r))));
       await Promise.all(scope.map((r) => approveFactura(r.id)));
       setSuccessMsg('Comprobante(s) aprobado(s) correctamente.');
       setRemitosCargados([]);
@@ -420,7 +517,7 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 1100 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 1100, height: '100%' }}>
         {showCatalogosWarn && (
           <div
             style={{
@@ -428,6 +525,7 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
               alignItems: 'center',
               gap: 12,
               flexWrap: 'wrap',
+              flexShrink: 0,
               background: 'var(--err-weak)',
               color: 'var(--err)',
               border: '1px solid #f0c6c6',
@@ -469,24 +567,17 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
         )}
 
         {tipoComp === 'remito' && (
-          <div style={{ fontSize: 12.5, color: 'var(--muted-3)', background: '#f4f8ff', border: '1px solid var(--border)', borderRadius: 8, padding: '9px 13px' }}>
+          <div style={{ fontSize: 12.5, color: 'var(--muted-3)', background: '#f4f8ff', border: '1px solid var(--border)', borderRadius: 8, padding: '9px 13px', flexShrink: 0 }}>
             La API sólo tiene un endpoint de carga (factura); el PDF se procesa igual, sin desglose de IVA abajo.
           </div>
         )}
 
         {/*
-          Advertencias de validación, arriba de todo y siempre visibles mientras haya un
-          comprobante en pantalla. Sólo los ERRORES: los avisos (importes en cero) son
-          situaciones legítimas y mostrarlos acá permanentemente los volvería ruido que
-          el operador aprende a ignorar — van únicamente en el modal, que es el último
-          momento en que puede frenar.
+          Las advertencias ya NO van en un cartel arriba: cada campo con problema se
+          marca en amarillo con su tooltip (ver `warnArt`/`warnRem`). En el modal sí se
+          listan todas antes de cargar.
         */}
-        <PanelAdvertencias
-          advertencias={errores}
-          titulo="Revisá estos datos antes de procesar"
-        />
-
-        <section style={cardStyle}>
+        <section style={{ ...cardStyle, flexShrink: 0 }}>
           <div style={{ display: 'flex', gap: 22, alignItems: 'flex-end', flexWrap: 'wrap' }}>
             <div style={fieldColStyle}>
               <label style={labelStyle}>Sucursal</label>
@@ -624,8 +715,8 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
           )}
         </section>
 
-        <section style={{ ...cardStyle, padding: 0, overflow: 'hidden' }}>
-          <div className="ds-scroll" style={{ height: 360, overflow: 'auto' }}>
+        <section style={{ ...cardStyle, padding: 0, overflow: 'hidden', flex: 1, minHeight: 220, display: 'flex', flexDirection: 'column' }}>
+          <div className="ds-scroll" style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
             <div style={{ minWidth: 600 }}>
               <div style={gridHeaderStyle}>
                 <span>CÓDIGO</span>
@@ -665,6 +756,7 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
                       onCommit={commitEdit}
                       align="left"
                       muted
+                      warn={warnArt(remitoId, articulo.id, 'codigo')}
                     />
                     <span style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
                       <span style={{ width: 8, height: 8, flex: 'none', borderRadius: '50%', background: color }} />
@@ -676,6 +768,7 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
                         onCommit={commitEdit}
                         align="left"
                         grow
+                        warn={warnArt(remitoId, articulo.id, 'nombre')}
                       />
                     </span>
                     <EditableCell
@@ -686,6 +779,7 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
                       onCommit={commitEdit}
                       align="right"
                       bold
+                      warn={warnArt(remitoId, articulo.id, 'cantidad')}
                     />
                     <EditableCell
                       value={money(articulo.precio_unitario)}
@@ -695,10 +789,25 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
                       onChange={(v) => updateArticuloLocal(remitoId, articulo.id, 'precio_unitario', v.replace(/[^0-9.,]/g, ''))}
                       onCommit={commitEdit}
                       align="right"
+                      warn={warnArt(remitoId, articulo.id, 'precio_unitario')}
                     />
-                    <span style={{ textAlign: 'right', fontWeight: 600, color: 'var(--ink-2)' }} title="Se calcula automáticamente">
-                      {money(articulo.total_unitario ?? round2(toCantidad(articulo.cantidad) * toPrecio(articulo.precio_unitario)))}
-                    </span>
+                    {/*
+                      El total de línea por defecto es cantidad × precio (o el valor del
+                      LLM) y se recalcula solo, pero es editable como última instancia:
+                      al editarlo queda lockeado y deja de recalcularse (ver
+                      editArticuloTotal). Amarillo si hay descalce o está en cero.
+                    */}
+                    <EditableCell
+                      value={money(articulo.total_unitario ?? round2(toCantidad(articulo.cantidad) * toPrecio(articulo.precio_unitario)))}
+                      rawValue={String(articulo.total_unitario ?? '')}
+                      editing={editCell?.itemId === articulo.id && editCell.field === 'total_unitario'}
+                      onStartEdit={() => setEditCell({ remitoId, itemId: articulo.id, field: 'total_unitario' })}
+                      onChange={(v) => editArticuloTotal(remitoId, articulo.id, v.replace(/[^0-9.,]/g, ''))}
+                      onCommit={commitEdit}
+                      align="right"
+                      bold
+                      warn={warnArt(remitoId, articulo.id, 'total_unitario')}
+                    />
                   </div>
                 );
               })}
@@ -706,7 +815,7 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
           </div>
         </section>
 
-        <section style={{ ...cardStyle, display: 'flex', gap: 26, flexWrap: 'wrap', justifyContent: 'space-between' }}>
+        <section style={{ ...cardStyle, display: 'flex', gap: 26, flexWrap: 'wrap', justifyContent: 'space-between', flexShrink: 0 }}>
           <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 7, width: 230 }}>
               <label style={labelStyle}>Nº Factura <span style={{ fontWeight: 400, color: 'var(--muted-3)' }}>· doble clic para editar</span></label>
@@ -729,13 +838,13 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
                   style={headerInputStyle}
                 />
               ) : (
-                <div
+                <ReadonlyBox
                   onDoubleClick={() => remitosCargados.length > 0 && setEditHeader({ id: remitosCargados[0].id, field: 'facturaNro' })}
-                  title="Doble clic para editar"
-                  style={{ ...readonlyBoxStyle, cursor: remitosCargados.length > 0 ? 'text' : 'default' }}
+                  warn={warnFactura}
+                  editable={remitosCargados.length > 0}
                 >
                   {formatNroComprobante(remitosCargados[0]?.facturaNro)}
-                </div>
+                </ReadonlyBox>
               )}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 7, minWidth: 260, flex: 1 }}>
@@ -769,12 +878,14 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
                       />
                     );
                   }
-                  return (
+                  const warnRemito = warnRem(r.id, 'remitoNro');
+                  const advertido = warnRemito.length > 0;
+                  const boton = (
                     <button
                       key={r.id}
                       onClick={() => setRemitoSel((cur) => (cur === r.id ? null : r.id))}
                       onDoubleClick={() => setEditHeader({ id: r.id, field: 'remitoNro' })}
-                      title="Clic: marcar artículos · Doble clic: editar Nº"
+                      title={advertido ? undefined : 'Clic: marcar artículos · Doble clic: editar Nº'}
                       style={{
                         display: 'inline-flex',
                         alignItems: 'center',
@@ -785,14 +896,21 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
                         fontSize: 13,
                         fontWeight: 700,
                         cursor: 'pointer',
-                        border: `1px solid ${active ? color : 'var(--border-2)'}`,
+                        border: `1px solid ${advertido ? 'var(--warn)' : active ? color : 'var(--border-2)'}`,
                         background: active ? light : '#fff',
-                        color: active ? color : '#3a4352',
+                        color: advertido ? 'var(--warn)' : active ? color : '#3a4352',
                       }}
                     >
                       <span style={{ width: 9, height: 9, flex: 'none', borderRadius: '50%', background: color }} />
                       <span>{r.remitoNro ? formatNroComprobante(r.remitoNro) : '(sin número)'}</span>
                     </button>
+                  );
+                  return advertido ? (
+                    <Tooltip key={r.id} texto={mensajesTooltip(warnRemito)} fondo={TOOLTIP_WARN_BG}>
+                      {boton}
+                    </Tooltip>
+                  ) : (
+                    boton
                   );
                 })}
               </div>
@@ -801,15 +919,66 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
           <div style={{ minWidth: 260, display: 'flex', flexDirection: 'column', gap: 9 }}>
             {tipoComp === 'factura' && (
               <>
-                <TotalLine k="Subtotal:" v={money(totals.subtotal)} />
-                {totals.descuentos > 0 && <TotalLine k="Bonificaciones:" v={'- ' + money(totals.descuentos)} />}
-                <TotalLine k="Percepciones" v={money(totals.percepciones)} />
-                <TotalLine k="IVA:" v={money(totals.iva)} />
+                {/*
+                  Cada monto por defecto es lo que devolvió el LLM y se recalcula solo,
+                  pero es editable como última instancia cuando hay un único remito (doble
+                  clic). Amarillo si el subtotal/total no cierra. Con varios remitos se
+                  muestra la SUMA, sin edición.
+                */}
+                <EditableAmount
+                  label="Subtotal:"
+                  value={money(totals.subtotal)}
+                  rawValue={remitoUnico ? String(remitoUnico.subtotal ?? '') : undefined}
+                  editable={!!remitoUnico}
+                  editing={editAmount?.field === 'subtotal'}
+                  onStartEdit={() => remitoUnico && setEditAmount({ remitoId: remitoUnico.id, field: 'subtotal' })}
+                  onChange={(v) => remitoUnico && editRemitoAmount(remitoUnico.id, 'subtotal', v)}
+                  onCommit={() => setEditAmount(null)}
+                  warn={remitoUnico ? warnRem(remitoUnico.id, 'subtotal') : []}
+                />
+                <EditableAmount
+                  label="Bonificaciones:"
+                  value={(totals.descuentos > 0 ? '- ' : '') + money(totals.descuentos)}
+                  rawValue={remitoUnico ? String(remitoUnico.descuentos ?? '') : undefined}
+                  editable={!!remitoUnico}
+                  editing={editAmount?.field === 'descuentos'}
+                  onStartEdit={() => remitoUnico && setEditAmount({ remitoId: remitoUnico.id, field: 'descuentos' })}
+                  onChange={(v) => remitoUnico && editRemitoAmount(remitoUnico.id, 'descuentos', v)}
+                  onCommit={() => setEditAmount(null)}
+                />
+                <EditableAmount
+                  label="Percepciones:"
+                  value={money(totals.percepciones)}
+                  rawValue={remitoUnico ? String(remitoUnico.percepciones ?? '') : undefined}
+                  editable={!!remitoUnico}
+                  editing={editAmount?.field === 'percepciones'}
+                  onStartEdit={() => remitoUnico && setEditAmount({ remitoId: remitoUnico.id, field: 'percepciones' })}
+                  onChange={(v) => remitoUnico && editRemitoAmount(remitoUnico.id, 'percepciones', v)}
+                  onCommit={() => setEditAmount(null)}
+                />
+                <EditableAmount
+                  label="IVA:"
+                  value={money(totals.iva)}
+                  rawValue={remitoUnico ? String(remitoUnico.iva ?? '') : undefined}
+                  editable={!!remitoUnico}
+                  editing={editAmount?.field === 'iva'}
+                  onStartEdit={() => remitoUnico && setEditAmount({ remitoId: remitoUnico.id, field: 'iva' })}
+                  onChange={(v) => remitoUnico && editRemitoAmount(remitoUnico.id, 'iva', v)}
+                  onCommit={() => setEditAmount(null)}
+                />
                 <div style={{ height: 1, background: '#eef1f6', margin: '4px 0' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 19, fontWeight: 800, color: 'var(--blue)' }}>
-                  <span>Total:</span>
-                  <span>{money(totals.total)}</span>
-                </div>
+                <EditableAmount
+                  label="Total:"
+                  value={money(totals.total)}
+                  rawValue={remitoUnico ? String(remitoUnico.total ?? '') : undefined}
+                  editable={!!remitoUnico}
+                  editing={editAmount?.field === 'total'}
+                  onStartEdit={() => remitoUnico && setEditAmount({ remitoId: remitoUnico.id, field: 'total' })}
+                  onChange={(v) => remitoUnico && editRemitoAmount(remitoUnico.id, 'total', v)}
+                  onCommit={() => setEditAmount(null)}
+                  warn={remitoUnico ? warnRem(remitoUnico.id, 'total') : []}
+                  big
+                />
               </>
             )}
             {/*
@@ -821,21 +990,27 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
             <button
               disabled={scope.length === 0 || approving}
               onClick={() => setConfirmProcesar(true)}
-              title={bloqueadoPorValidacion ? `${errores.length} dato(s) a corregir antes de procesar` : undefined}
+              title={
+                bloqueadoPorValidacion
+                  ? `${errores.length} dato(s) a corregir antes de procesar`
+                  : avisos.length > 0
+                    ? `${avisos.length} dato(s) para revisar`
+                    : undefined
+              }
               style={{
                 marginTop: 8,
                 height: 46,
                 borderRadius: 9,
                 border: 'none',
                 background:
-                  scope.length === 0 || approving ? '#9bbfa8' : bloqueadoPorValidacion ? 'var(--warn)' : 'var(--ok)',
+                  scope.length === 0 || approving ? '#9bbfa8' : hayAdvertencias ? 'var(--warn)' : 'var(--ok)',
                 color: '#fff',
                 fontWeight: 700,
                 fontSize: 15,
                 cursor: scope.length === 0 || approving ? 'not-allowed' : 'pointer',
               }}
             >
-              {approving ? 'Procesando…' : bloqueadoPorValidacion ? 'Revisar y procesar' : 'Procesar factura'}
+              {approving ? 'Procesando…' : hayAdvertencias ? 'Revisar y procesar' : 'Procesar factura'}
             </button>
           </div>
         </section>
@@ -892,11 +1067,83 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
   );
 }
 
-function TotalLine({ k, v }: { k: string; v: string }) {
+interface EditableAmountProps {
+  label: string;
+  value: string;
+  /** Valor numérico crudo para el input (sin formato de moneda). */
+  rawValue?: string;
+  editable: boolean;
+  editing: boolean;
+  onStartEdit: () => void;
+  onChange: (v: string) => void;
+  onCommit: () => void;
+  warn?: string[];
+  /** Fila de total (grande y en azul). */
+  big?: boolean;
+}
+
+/**
+ * Fila de un monto del pie de factura. Muestra el valor formateado; con doble clic (si
+ * `editable`) pasa a input para el override manual. Amarillo + tooltip si hay `warn`.
+ */
+function EditableAmount({ label, value, rawValue, editable, editing, onStartEdit, onChange, onCommit, warn, big }: EditableAmountProps) {
+  const advertido = (warn?.length ?? 0) > 0;
+  const filaStyle: CSSProperties = big
+    ? { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 19, fontWeight: 800, color: 'var(--blue)' }
+    : { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 14, color: 'var(--muted)' };
+
+  const valorColor = advertido ? 'var(--warn)' : big ? 'var(--blue)' : 'var(--ink-2)';
+
+  const display = (
+    <span
+      onDoubleClick={editable ? onStartEdit : undefined}
+      title={editable && !advertido ? 'Doble clic para editar' : undefined}
+      style={{
+        fontVariantNumeric: 'tabular-nums',
+        color: valorColor,
+        cursor: advertido ? 'help' : editable ? 'text' : 'default',
+        textDecoration: advertido ? 'underline dotted' : undefined,
+        textUnderlineOffset: advertido ? 3 : undefined,
+        fontWeight: big ? 800 : 600,
+      }}
+    >
+      {value}
+    </span>
+  );
+
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, color: 'var(--muted)' }}>
-      <span>{k}</span>
-      <span>{v}</span>
+    <div style={filaStyle}>
+      <span>{label}</span>
+      {editing ? (
+        <input
+          autoFocus
+          defaultValue={rawValue ?? ''}
+          onChange={(e) => onChange(e.target.value.replace(/[^0-9.,]/g, ''))}
+          onBlur={onCommit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === 'Escape') (e.target as HTMLInputElement).blur();
+          }}
+          style={{
+            width: 130,
+            height: 30,
+            border: `1px solid ${advertido ? 'var(--warn)' : 'var(--blue)'}`,
+            borderRadius: 6,
+            padding: '0 8px',
+            fontSize: big ? 16 : 13.5,
+            fontWeight: big ? 800 : 600,
+            color: 'var(--ink)',
+            outline: 'none',
+            background: '#fff',
+            textAlign: 'right',
+          }}
+        />
+      ) : advertido ? (
+        <Tooltip texto={mensajesTooltip(warn!)} fondo={TOOLTIP_WARN_BG}>
+          {display}
+        </Tooltip>
+      ) : (
+        display
+      )}
     </div>
   );
 }
@@ -912,9 +1159,12 @@ interface EditableCellProps {
   bold?: boolean;
   muted?: boolean;
   grow?: boolean;
+  /** Mensajes de advertencia: si hay, la celda se pinta de amarillo con tooltip. */
+  warn?: string[];
 }
 
-function EditableCell({ value, rawValue, editing, onStartEdit, onChange, onCommit, align, bold, muted, grow }: EditableCellProps) {
+function EditableCell({ value, rawValue, editing, onStartEdit, onChange, onCommit, align, bold, muted, grow, warn }: EditableCellProps) {
+  const advertido = (warn?.length ?? 0) > 0;
   if (editing) {
     return (
       <input
@@ -928,7 +1178,7 @@ function EditableCell({ value, rawValue, editing, onStartEdit, onChange, onCommi
         style={{
           width: '100%',
           height: 32,
-          border: '1px solid var(--blue)',
+          border: `1px solid ${advertido ? 'var(--warn)' : 'var(--blue)'}`,
           borderRadius: 6,
           padding: '0 8px',
           fontSize: '13.5px',
@@ -940,24 +1190,89 @@ function EditableCell({ value, rawValue, editing, onStartEdit, onChange, onCommi
       />
     );
   }
-  return (
+  const contenido = (
     <span
       onDoubleClick={onStartEdit}
-      title="Doble clic para editar"
+      title={advertido ? undefined : 'Doble clic para editar'}
       style={{
+        // En las columnas numéricas (align derecha) el span ocupa toda la celda para que
+        // el valor quede alineado con el encabezado de la columna. En las de la izquierda
+        // (código/nombre) se deja el comportamiento inline original (ellipsis, etc.).
+        display: align === 'right' ? 'block' : undefined,
+        width: align === 'right' ? '100%' : undefined,
         textAlign: align,
         fontVariantNumeric: 'tabular-nums',
         fontWeight: bold ? 700 : undefined,
-        color: bold ? 'var(--navy)' : muted ? 'var(--muted-2)' : 'var(--ink-2)',
+        // Con advertencia el color ámbar manda por encima del color normal de la celda.
+        color: advertido ? 'var(--warn)' : bold ? 'var(--navy)' : muted ? 'var(--muted-2)' : 'var(--ink-2)',
         fontSize: muted ? '12.5px' : 14,
-        cursor: 'text',
+        cursor: advertido ? 'help' : 'text',
         overflow: grow ? 'hidden' : undefined,
         textOverflow: grow ? 'ellipsis' : undefined,
         whiteSpace: grow ? 'nowrap' : undefined,
+        textDecoration: advertido ? 'underline dotted' : undefined,
+        textUnderlineOffset: advertido ? 3 : undefined,
       }}
     >
       {value}
     </span>
+  );
+  if (!advertido) return contenido;
+  // El wrapper del tooltip ocupa toda la celda y reparte el contenido según `align`, para
+  // no perder la alineación con el encabezado de la columna al envolver en la burbuja.
+  return (
+    <Tooltip
+      texto={mensajesTooltip(warn!)}
+      fondo={TOOLTIP_WARN_BG}
+      wrapperStyle={
+        align === 'right'
+          ? { width: '100%', justifyContent: 'flex-end' }
+          : { maxWidth: '100%', minWidth: 0 }
+      }
+    >
+      {contenido}
+    </Tooltip>
+  );
+}
+
+/** Une varios mensajes de advertencia en el texto de una burbuja (uno por línea). */
+function mensajesTooltip(mensajes: string[]): string {
+  return mensajes.length === 1 ? mensajes[0] : mensajes.map((m) => `• ${m}`).join('\n');
+}
+
+/** Caja de sólo lectura (Nº de factura) con doble clic para editar y warn opcional. */
+function ReadonlyBox({
+  children,
+  onDoubleClick,
+  warn,
+  editable,
+}: {
+  children: ReactNode;
+  onDoubleClick: () => void;
+  warn?: string[];
+  editable: boolean;
+}) {
+  const advertido = (warn?.length ?? 0) > 0;
+  const box = (
+    <div
+      onDoubleClick={onDoubleClick}
+      title={editable && !advertido ? 'Doble clic para editar' : undefined}
+      style={{
+        ...readonlyBoxStyle,
+        cursor: editable ? 'text' : 'default',
+        borderColor: advertido ? 'var(--warn)' : 'var(--border-2)',
+        color: advertido ? 'var(--warn)' : 'var(--ink)',
+      }}
+    >
+      {children}
+    </div>
+  );
+  return advertido ? (
+    <Tooltip texto={mensajesTooltip(warn!)} fondo={TOOLTIP_WARN_BG} wrapperStyle={{ display: 'block' }}>
+      {box}
+    </Tooltip>
+  ) : (
+    box
   );
 }
 

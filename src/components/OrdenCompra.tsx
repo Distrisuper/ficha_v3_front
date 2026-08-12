@@ -1,5 +1,6 @@
-import { useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import type { EstadoOrdenCompra } from '../hooks/useOrdenCompra';
+import { Tooltip } from './Tooltip';
 
 /**
  * Indicadores del cruce contra la orden de compra del proveedor.
@@ -124,17 +125,9 @@ function estadoDeFlag(flag: boolean | null | undefined): EstadoMatch {
 const ANCHO_TOOLTIP = 220;
 
 /**
- * Icono con tooltip propio.
- *
- * `position: fixed` con coordenadas medidas, y no `absolute`: la lista de
- * artículos vive dentro de un contenedor con `overflow-y: auto`, y eso crea un
- * contexto de recorte que se come cualquier hijo posicionado — en las dos
- * direcciones, porque el spec computa el `overflow-x: visible` a `auto` cuando el
- * otro eje no es visible. Con `absolute` el tooltip de la primera y la última fila
- * quedaba cortado.
- *
- * El `title` nativo se deja igual: es el fallback en touch (donde no hay hover) y
- * para lectores de pantalla.
+ * Icono del semáforo con su tooltip. La burbuja `fixed` la resuelve `Tooltip`
+ * (compartido con las advertencias por campo); acá sólo se le da la caja de color
+ * según la paleta del estado.
  */
 function IconoConTooltip({
   estado,
@@ -145,48 +138,12 @@ function IconoConTooltip({
   texto: string;
   children: ReactNode;
 }) {
-  const ref = useRef<HTMLSpanElement | null>(null);
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const paleta = PALETA[estado];
-
-  const mostrar = () => {
-    const caja = ref.current?.getBoundingClientRect();
-    if (!caja) return;
-    // Centrado sobre el icono, acotado al viewport para que no se escape por el
-    // borde derecho.
-    const left = Math.min(
-      Math.max(8, caja.left + caja.width / 2 - ANCHO_TOOLTIP / 2),
-      window.innerWidth - ANCHO_TOOLTIP - 8,
-    );
-    setPos({ top: caja.top, left });
-  };
-
-  const burbuja: CSSProperties = {
-    position: 'fixed',
-    top: (pos?.top ?? 0) - 8,
-    left: pos?.left ?? 0,
-    transform: 'translateY(-100%)',
-    zIndex: 60,
-    width: ANCHO_TOOLTIP,
-    background: '#12327a',
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: 600,
-    lineHeight: 1.35,
-    padding: '7px 10px',
-    borderRadius: 7,
-    boxShadow: '0 6px 20px rgba(18,50,122,.22)',
-    pointerEvents: 'none',
-  };
-
   return (
-    <span
-      ref={ref}
-      title={texto}
-      onMouseEnter={mostrar}
-      onMouseLeave={() => setPos(null)}
-      style={{
-        display: 'inline-flex',
+    <Tooltip
+      texto={texto}
+      ancho={ANCHO_TOOLTIP}
+      wrapperStyle={{
         alignItems: 'center',
         justifyContent: 'center',
         width: 24,
@@ -200,8 +157,7 @@ function IconoConTooltip({
       }}
     >
       {children}
-      {pos && <span style={burbuja}>{texto}</span>}
-    </span>
+    </Tooltip>
   );
 }
 

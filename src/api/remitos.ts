@@ -1,11 +1,57 @@
 import { api } from './client';
-import type { Remito, UUID } from '../types/api';
+import type { Articulo, Remito, UUID } from '../types/api';
 
 /** Espejo de `UpdateRemitoSchema` del back (`src/remitos/schemas/remito.schema.ts`). */
 export interface UpdateRemitoInput {
   remitoNro?: string | null;
   facturaNro?: string | null;
   fecha?: string | null;
+}
+
+/**
+ * Payload de `PATCH /remitos/:id/items`.
+ *
+ * El back persiste cada artículo (`cantidad`, `precioUnitario`, `total`) y los montos
+ * de cabecera del remito tal como los calculó el front (modelo con IVA/percepciones/
+ * bonificaciones a nivel remito). Los nombres van en la forma que espera el back
+ * (`precioUnitario`, `total`), no en la del front (`precio_unitario`, `total_unitario`).
+ */
+export interface UpdateItemsInput {
+  items: { id: UUID; cantidad: number; precioUnitario: number; total: number }[];
+  subtotal: number;
+  iva: number;
+  percepciones: number;
+  descuentos: number;
+  total: number;
+}
+
+/**
+ * Normaliza un artículo del back al contrato del front.
+ *
+ * La entity `Articulo` del back serializa por NOMBRE DE PROPIEDAD (`precioUnitario`,
+ * `totalUnitario`), no por el nombre de columna (`precio_unitario`, `total_unitario`).
+ * El front modela todo en snake_case, así que sin este mapeo `precio_unitario` y
+ * `total_unitario` llegaban `undefined` y se mostraban como $ 0,00. Se conservan ambas
+ * formas por robustez ante cualquiera de los dos contratos.
+ */
+function normalizeArticulo(a: Record<string, unknown>): Articulo {
+  const precio = a.precio_unitario ?? a.precioUnitario ?? 0;
+  const total = a.total_unitario ?? a.totalUnitario ?? 0;
+  return { ...a, precio_unitario: precio, total_unitario: total } as unknown as Articulo;
+}
+
+/** Normaliza los artículos de un remito (ver `normalizeArticulo`). */
+function normalizeRemito<T extends Remito | null | undefined>(r: T): T {
+  if (!r || typeof r !== 'object') return r;
+  const articulos = Array.isArray((r as Remito).articulos)
+    ? (r as Remito).articulos!.map((a) => normalizeArticulo(a as unknown as Record<string, unknown>))
+    : (r as Remito).articulos;
+  return { ...(r as Remito), articulos } as T;
+}
+
+/** Normaliza una lista de remitos. */
+function normalizeRemitos(rs: Remito[]): Remito[] {
+  return Array.isArray(rs) ? rs.map((r) => normalizeRemito(r)) : rs;
 }
 
 export interface ListRemitosParams {
@@ -31,7 +77,7 @@ export async function listRemitos(sucursalId?: UUID, params?: ListRemitosParams)
   if (params?.fechaHasta) qs.set('fechaHasta', params.fechaHasta);
   const query = qs.toString();
   const data = await api.get<Remito[]>(`/remitos${query ? `?${query}` : ''}`);
-  const arr = Array.isArray(data) ? data : [];
+  const arr = normalizeRemitos(Array.isArray(data) ? data : []);
   if (!sucursalId) return arr;
   // Filtro tolerante: sólo descartamos filas con una sucursal EXPLÍCITAMENTE distinta.
   // Si el back no incluye sucursalId en la respuesta (o lo manda anidado en `sucursal`),
@@ -70,7 +116,7 @@ export async function listHistorial(
 
   const data = await api.get<HistorialPage>(`/remitos/history${query ? `?${query}` : ''}`);
   return data && Array.isArray(data.items)
-    ? data
+    ? { ...data, items: normalizeRemitos(data.items) }
     : { items: [], total: 0, limite: limite ?? 0, offset: offset ?? 0 };
 }
 
@@ -78,9 +124,9 @@ export const remitosApi = {
   list: listRemitos,
   history: listHistorial,
   // Último grupo de remitos PROCESADOS del usuario (para aprobar/rechazar al iniciar).
-  own: () => api.get<Remito[]>('/remitos/own'),
-  getByJobId: (jobId: string) => api.get<Remito[]>(`/remitos/by-job/${jobId}`),
-  get: (id: UUID) => api.get<Remito | null>(`/remitos/${id}`),
+  own: () => api.get<Remito[]>('/remitos/own').then(normalizeRemitos),
+  getByJobId: (jobId: string) => api.get<Remito[]>(`/remitos/by-job/${jobId}`).then(normalizeRemitos),
+  get: (id: UUID) => api.get<Remito | null>(`/remitos/${id}`).then(normalizeRemito),
   approve: (id: UUID) => api.patch<Remito>(`/remitos/${id}/approve`),
   updateTotal: (id: UUID, total: number) => api.patch<Remito>(`/remitos/${id}/total`, { total }),
   /**
@@ -92,8 +138,9 @@ export const remitosApi = {
    * y los montos, que el back aceptaba y escribía.
    */
   update: (id: UUID, data: UpdateRemitoInput) => api.patch<Remito>(`/remitos/${id}`, data),
-  // Backend stub: PATCH /remitos/:id/items no persiste hoy (ver aviso en UI).
-  updateItems: (id: UUID, items: unknown[]) => api.patch<Remito>(`/remitos/${id}/items`, items),
+  // Corrige los ítems y persiste los montos calculados por el front.
+  // El back lee `precioUnitario`/`total` por ítem y los montos de cabecera del objeto.
+  updateItems: (id: UUID, payload: UpdateItemsInput) => api.patch<Remito>(`/remitos/${id}/items`, payload),
   // Envía los UUID de los artículos marcados para que el back procese la carga a stock.
   submitMercaderia: (id: UUID, articulos: string[]) =>
     api.post<void>(`/remitos/submit-mercaderia/${id}`, { articulos }),

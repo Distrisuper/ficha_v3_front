@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useData } from '../context/data-context';
 import { remitosApi } from '../api/remitos';
 import { money, fmtDate, fmtCantidad } from '../utils/money';
@@ -7,11 +7,23 @@ import { PENDIENTES_ESTADOS } from '../utils/estados';
 import { applyFilters, type RemitoFilters } from '../utils/filtros';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { PanelAdvertencias } from '../components/PanelAdvertencias';
+import { Tooltip } from '../components/Tooltip';
 import { BadgeOrdenCompra, IconosMatch, Spinner } from '../components/OrdenCompra';
 import { formatNroComprobante } from '../utils/comprobante';
-import { soloAvisos, soloErrores, validarRemito, type Advertencia } from '../utils/validacionFactura';
+import {
+  claveCampo,
+  indexarPorCampo,
+  soloAvisos,
+  soloErrores,
+  validarRemito,
+  type Advertencia,
+  type CampoAdvertencia,
+} from '../utils/validacionFactura';
+
+// Fondo de la burbuja de advertencia (ámbar oscuro, legible con texto blanco).
+const TOOLTIP_WARN_BG = '#8a6410';
 import { useOrdenCompra } from '../hooks/useOrdenCompra';
-import { useProcesosFallidos } from '../hooks/useProcesosFallidos';
+// import { useProcesosFallidos } from '../hooks/useProcesosFallidos'; // reactivar junto con el bloque de alertas comentado
 import type { Articulo, Remito } from '../types/api';
 
 type ConfirmAction = { type: 'factura' | 'stock'; remito: Remito };
@@ -37,7 +49,10 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
 
   // Fallos definitivos, del estado persistido en el job. No dependen de haber estado
   // conectado cuando ocurrieron: sobreviven a un refresh.
-  const procesosFallidos = useProcesosFallidos();
+  // NOTA: el hook se reactiva junto con el bloque de alertas de `procesosFallidos` que
+  // está comentado más abajo. Mientras ese bloque no se use, dejarlo activo rompía el
+  // build (noUnusedLocals), así que queda comentado a la par.
+  // const procesosFallidos = useProcesosFallidos();
 
   // Verificaciones previas a la carga de la factura, por remito.
   //
@@ -55,6 +70,15 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
     }
     return out;
   }, [pendientes]);
+
+  // Índice campo → mensajes, para pintar de amarillo cada dato con problema y mostrar el
+  // motivo en un tooltip (reemplaza el cartel amarillo que antes iba arriba de la card).
+  const advIndex = useMemo(
+    () => indexarPorCampo(Object.values(advertenciasPorRemito).flat()),
+    [advertenciasPorRemito],
+  );
+  const warnFor = (remitoId: string, campo: CampoAdvertencia, articuloId?: string): string[] =>
+    (advIndex.get(claveCampo(remitoId, campo, articuloId)) ?? []).map((a) => a.mensaje);
 
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -323,8 +347,11 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
           // El flujo de orden de compra publica su progreso con processId = jobId.
           const estadoOc = r.jobId ? ordenCompraPorJob[r.jobId] : undefined;
           const ocProcesando = estadoOc === 'procesando';
-          // Sólo los errores se muestran en la card; los avisos van en el modal.
-          const erroresCard = soloErrores(advertenciasPorRemito[r.id] ?? []);
+          // Errores (bloquean) y avisos (no bloquean) del comprobante. Cada uno ya está
+          // marcado en amarillo sobre su campo; acá sólo se usa para el color/estado del botón.
+          const advCard = advertenciasPorRemito[r.id] ?? [];
+          const erroresCard = soloErrores(advCard);
+          const hayAdvertenciasCard = advCard.length > 0;
           return (
             <div
               key={r.id}
@@ -357,8 +384,8 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                 }}
               >
                 <div style={{ display: 'flex', gap: 36, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <HeadCell label="Nº REMITO" value={formatNroComprobante(r.remitoNro)} big />
-                  <HeadCell label="Nº FACTURA" value={formatNroComprobante(r.facturaNro)} />
+                  <HeadCell label="Nº REMITO" value={formatNroComprobante(r.remitoNro)} big warn={warnFor(r.id, 'remitoNro')} />
+                  <HeadCell label="Nº FACTURA" value={formatNroComprobante(r.facturaNro)} warn={warnFor(r.id, 'facturaNro')} />
                   <HeadCell label="PROVEEDOR" value={provName(r)} />
                   {mostrarSucursal && <HeadCell label="SUCURSAL" value={sucName(r)} />}
                   <HeadCell label="ESTADO" value={r.facturaCargada === true ? 'Factura cargada' : 'Remito Cargado'} />
@@ -412,6 +439,9 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                   )}
                   {items.map((it) => {
                     const checked = selected.has(it.id);
+                    const warnNombre = warnFor(r.id, 'nombre', it.id);
+                    const warnCodigo = warnFor(r.id, 'codigo', it.id);
+                    const warnCantidad = warnFor(r.id, 'cantidad', it.id);
                     return (
                       <div
                         key={it.id}
@@ -436,11 +466,44 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                             />
                           )}
                           <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                            <span style={{ fontSize: 14, color: 'var(--ink-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={it.nombre}>
-                              {it.nombre || '—'}
-                            </span>
-                            {it.codigo ? (
-                              <span style={{ fontSize: 11.5, color: 'var(--muted-2)', fontVariantNumeric: 'tabular-nums' }}>{it.codigo}</span>
+                            {(() => {
+                              const nombreNode = (
+                                <span
+                                  style={{
+                                    fontSize: 14,
+                                    color: warnNombre.length ? 'var(--warn)' : 'var(--ink-2)',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                    cursor: warnNombre.length ? 'help' : undefined,
+                                    textDecoration: warnNombre.length ? 'underline dotted' : undefined,
+                                    textUnderlineOffset: warnNombre.length ? 3 : undefined,
+                                  }}
+                                  title={warnNombre.length ? undefined : it.nombre}
+                                >
+                                  {it.nombre || '—'}
+                                </span>
+                              );
+                              return warnNombre.length ? conAdvertencia(warnNombre, nombreNode) : nombreNode;
+                            })()}
+                            {it.codigo || warnCodigo.length ? (
+                              (() => {
+                                const codigoNode = (
+                                  <span
+                                    style={{
+                                      fontSize: 11.5,
+                                      color: warnCodigo.length ? 'var(--warn)' : 'var(--muted-2)',
+                                      fontVariantNumeric: 'tabular-nums',
+                                      cursor: warnCodigo.length ? 'help' : undefined,
+                                      textDecoration: warnCodigo.length ? 'underline dotted' : undefined,
+                                      textUnderlineOffset: warnCodigo.length ? 3 : undefined,
+                                    }}
+                                  >
+                                    {it.codigo || 'sin código'}
+                                  </span>
+                                );
+                                return warnCodigo.length ? conAdvertencia(warnCodigo, codigoNode) : codigoNode;
+                              })()
                             ) : null}
                           </div>
                         </div>
@@ -463,21 +526,28 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                             Los dígitos tabulares además evitan que "111" y "999"
                             midan diferente.
                           */}
-                          <span
-                            style={{
-                              fontSize: 14,
-                              fontWeight: 700,
-                              color: 'var(--navy)',
-                              background: 'var(--blue-weak)',
-                              borderRadius: 6,
-                              padding: '2px 10px',
-                              minWidth: 58,
-                              textAlign: 'center',
-                              fontVariantNumeric: 'tabular-nums',
-                            }}
-                          >
-                            {fmtCantidad(it.cantidad)}
-                          </span>
+                          {(() => {
+                            const cantidadNode = (
+                              <span
+                                style={{
+                                  fontSize: 14,
+                                  fontWeight: 700,
+                                  color: warnCantidad.length ? 'var(--warn)' : 'var(--navy)',
+                                  background: warnCantidad.length ? '#fdf8ec' : 'var(--blue-weak)',
+                                  border: warnCantidad.length ? '1px solid #f3dca6' : undefined,
+                                  borderRadius: 6,
+                                  padding: warnCantidad.length ? '1px 9px' : '2px 10px',
+                                  minWidth: 58,
+                                  textAlign: 'center',
+                                  fontVariantNumeric: 'tabular-nums',
+                                  cursor: warnCantidad.length ? 'help' : undefined,
+                                }}
+                              >
+                                {fmtCantidad(it.cantidad)}
+                              </span>
+                            );
+                            return warnCantidad.length ? conAdvertencia(warnCantidad, cantidadNode) : cantidadNode;
+                          })()}
                         </span>
                       </div>
                     );
@@ -488,13 +558,13 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
               </div>
               <div style={{ padding: '14px 22px 16px', borderTop: '1px solid #eef1f6', display: 'flex', flexDirection: 'column', gap: 12, background: esFacturaACargar ? '#fbfcfe' : '#fff' }}>
                 {/*
-                  Advertencias arriba del desglose económico: si los números no cierran,
-                  el operador tiene que leerlo ANTES de mirar el total, no después.
+                  Las advertencias ya NO van en un cartel arriba de la card: cada dato con
+                  problema se marca en amarillo con su tooltip (Nº, artículos, importes). En
+                  el modal sí se listan todas antes de cargar.
                 */}
-                <PanelAdvertencias advertencias={erroresCard} titulo="Esta factura no se puede cargar" />
                 {esFacturaACargar && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 8px', fontSize: 12.5, color: 'var(--muted-2)' }}>
-                    <EcoInline k="Subtotal" v={money(subtotal)} />
+                    <EcoInline k="Subtotal" v={money(subtotal)} warn={warnFor(r.id, 'subtotal')} />
                     {descuentos > 0 && <EcoInline k="Bonificaciones" v={'- ' + money(descuentos)} sep />}
                     <EcoInline k="Percepciones" v={money(percepciones)} sep />
                     <EcoInline k="IVA" v={money(iva)} sep />
@@ -504,7 +574,25 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                   {esFacturaACargar ? (
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: 9 }}>
                       <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '.5px', color: 'var(--muted-2)' }}>TOTAL</span>
-                      <span style={{ fontSize: 23, fontWeight: 800, color: 'var(--blue)', fontVariantNumeric: 'tabular-nums' }}>{money(totalFactura)}</span>
+                      {(() => {
+                        const warnTotal = warnFor(r.id, 'total');
+                        const totalNode = (
+                          <span
+                            style={{
+                              fontSize: 23,
+                              fontWeight: 800,
+                              color: warnTotal.length ? 'var(--warn)' : 'var(--blue)',
+                              fontVariantNumeric: 'tabular-nums',
+                              cursor: warnTotal.length ? 'help' : undefined,
+                              textDecoration: warnTotal.length ? 'underline dotted' : undefined,
+                              textUnderlineOffset: warnTotal.length ? 4 : undefined,
+                            }}
+                          >
+                            {money(totalFactura)}
+                          </span>
+                        );
+                        return warnTotal.length ? conAdvertencia(warnTotal, totalNode) : totalNode;
+                      })()}
                     </div>
                   ) : (
                     <span />
@@ -537,7 +625,13 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                     <button
                       onClick={() => setConfirmAction({ type: esFacturaACargar ? 'factura' : 'stock', remito: r })}
                       disabled={busyId === r.id || (editing && selCount === 0)}
-                      title={erroresCard.length > 0 ? `${erroresCard.length} dato(s) a corregir` : undefined}
+                      title={
+                        erroresCard.length > 0
+                          ? `${erroresCard.length} dato(s) a corregir`
+                          : hayAdvertenciasCard
+                            ? 'Hay datos para revisar'
+                            : undefined
+                      }
                       style={{
                         height: 44,
                         padding: '0 26px',
@@ -546,7 +640,7 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                         background:
                           busyId === r.id || (editing && selCount === 0)
                             ? '#8a94a6'
-                            : erroresCard.length > 0
+                            : hayAdvertenciasCard
                               ? 'var(--warn)'
                               : 'var(--ok)',
                         color: '#fff',
@@ -555,7 +649,7 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                         cursor: busyId === r.id || (editing && selCount === 0) ? 'not-allowed' : 'pointer',
                       }}
                     >
-                      {busyId === r.id ? 'Cargando…' : editing ? `Cargar (${selCount})` : r.facturaCargada === true ? 'Cargar Remito' : erroresCard.length > 0 ? 'Revisar factura' : 'Cargar Factura'}
+                      {busyId === r.id ? 'Cargando…' : editing ? `Cargar (${selCount})` : r.facturaCargada === true ? 'Cargar Remito' : hayAdvertenciasCard ? 'Revisar factura' : 'Cargar Factura'}
                     </button>
                   </div>
                 </div>
@@ -674,22 +768,61 @@ function ResumenMatch({ items, procesando }: { items: Articulo[]; procesando: bo
   );
 }
 
-function EcoInline({ k, v, sep }: { k: string; v: string; sep?: boolean }) {
+function EcoInline({ k, v, sep, warn }: { k: string; v: string; sep?: boolean; warn?: string[] }) {
+  const advertido = (warn?.length ?? 0) > 0;
+  const valor = (
+    <b
+      style={{
+        fontWeight: 700,
+        color: advertido ? 'var(--warn)' : 'var(--ink-2)',
+        fontVariantNumeric: 'tabular-nums',
+        cursor: advertido ? 'help' : undefined,
+        textDecoration: advertido ? 'underline dotted' : undefined,
+        textUnderlineOffset: advertido ? 3 : undefined,
+      }}
+    >
+      {v}
+    </b>
+  );
   return (
     <span style={{ whiteSpace: 'nowrap' }}>
       {sep && <span style={{ color: 'var(--muted-3)', marginRight: 8 }}>·</span>}
-      {k} <b style={{ fontWeight: 700, color: 'var(--ink-2)', fontVariantNumeric: 'tabular-nums' }}>{v}</b>
+      {k} {advertido ? conAdvertencia(warn!, valor) : valor}
     </span>
   );
 }
 
-function HeadCell({ label, value, big }: { label: string; value: string; big?: boolean }) {
+function HeadCell({ label, value, big, warn }: { label: string; value: string; big?: boolean; warn?: string[] }) {
+  const advertido = (warn?.length ?? 0) > 0;
+  const valor = (
+    <div
+      style={{
+        fontSize: big ? 22 : 16,
+        fontWeight: big ? 800 : 700,
+        color: advertido ? 'var(--warn)' : big ? 'var(--navy)' : 'var(--ink-2)',
+        letterSpacing: big ? '.3px' : undefined,
+        cursor: advertido ? 'help' : undefined,
+        textDecoration: advertido ? 'underline dotted' : undefined,
+        textUnderlineOffset: advertido ? 3 : undefined,
+      }}
+    >
+      {value}
+    </div>
+  );
   return (
     <div>
       <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.5px', color: 'var(--muted-2)' }}>{label}</div>
-      <div style={{ fontSize: big ? 22 : 16, fontWeight: big ? 800 : 700, color: big ? 'var(--navy)' : 'var(--ink-2)', letterSpacing: big ? '.3px' : undefined }}>
-        {value}
-      </div>
+      {advertido ? conAdvertencia(warn!, valor) : valor}
     </div>
+  );
+}
+
+/** Envuelve un nodo en un tooltip ámbar con los mensajes de advertencia del campo. */
+function conAdvertencia(warn: string[], node: ReactNode): ReactNode {
+  const texto = warn.length === 1 ? warn[0] : warn.map((m) => `• ${m}`).join('\n');
+  return (
+    <Tooltip texto={texto} fondo={TOOLTIP_WARN_BG}>
+      {node}
+    </Tooltip>
   );
 }
