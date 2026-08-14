@@ -3,7 +3,7 @@ import { useData } from '../context/data-context';
 import { useAuth } from '../context/auth-context';
 import { permsFor } from '../utils/roles';
 import { createFactura } from '../api/facturas';
-import { remitosApi, type UpdateItemsInput } from '../api/remitos';
+import { remitosApi, textoArticulo, LARGO_CODIGO, LARGO_NOMBRE, type UpdateItemsInput } from '../api/remitos';
 import { approveFactura } from '../api/facturas';
 import { ApiError } from '../api/client';
 import { STAGES_EXTRACCION, useProceso } from '../hooks/useProceso';
@@ -396,10 +396,19 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
    * Traduce del contrato del front (`precio_unitario`, `total_unitario`) al del back
    * (`precioUnitario`, `total`) y adjunta los montos de cabecera ya calculados, para que
    * el back los persista en vez de recalcularlos con un modelo distinto.
+   *
+   * `codigo` y `nombre` también viajan: las dos celdas son editables (doble clic) y sin
+   * mandarlas la corrección se veía en pantalla pero no llegaba nunca al back, así que
+   * al aprobar se persistía el valor que había leído el LLM.
+   *
+   * Pasan por `textoArticulo`, que recorta al largo de la columna y omite el campo si
+   * quedó vacío (ver el porqué en su docblock, en api/remitos.ts).
    */
   const itemsPayloadDe = (r: Remito): UpdateItemsInput => ({
     items: (r.articulos ?? []).map((a) => ({
       id: a.id,
+      codigo: textoArticulo(a.codigo, LARGO_CODIGO),
+      nombre: textoArticulo(a.nombre, LARGO_NOMBRE),
       cantidad: toNumero(a.cantidad),
       precioUnitario: toNumero(a.precio_unitario),
       total: toNumero(a.total_unitario),
