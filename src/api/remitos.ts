@@ -11,18 +11,60 @@ export interface UpdateRemitoInput {
 /**
  * Payload de `PATCH /remitos/:id/items`.
  *
- * El back persiste cada artículo (`cantidad`, `precioUnitario`, `total`) y los montos
- * de cabecera del remito tal como los calculó el front (modelo con IVA/percepciones/
- * bonificaciones a nivel remito). Los nombres van en la forma que espera el back
- * (`precioUnitario`, `total`), no en la del front (`precio_unitario`, `total_unitario`).
+ * El back persiste cada artículo (`codigo`, `nombre`, `cantidad`, `precioUnitario`,
+ * `total`) y los montos de cabecera del remito tal como los calculó el front (modelo
+ * con IVA/percepciones/bonificaciones a nivel remito). Los nombres van en la forma que
+ * espera el back (`precioUnitario`, `total`), no en la del front (`precio_unitario`,
+ * `total_unitario`).
+ *
+ * `codigo` y `nombre` viajan porque son editables en la grilla de Nuevo y antes no se
+ * mandaban: el operador corregía la descripción o el código de un artículo mal leído
+ * del PDF, la celda mostraba el valor nuevo, y al aprobar se guardaba el viejo. El back
+ * los aplica sólo si vienen definidos (son columnas NOT NULL), así que el contrato
+ * anterior sigue siendo válido.
+ *
+ * Van `optional` justamente para poder OMITIRLOS: ver `LARGO_CODIGO`/`LARGO_NOMBRE` y
+ * `textoArticulo` para el porqué.
  */
 export interface UpdateItemsInput {
-  items: { id: UUID; cantidad: number; precioUnitario: number; total: number }[];
+  items: {
+    id: UUID;
+    codigo?: string;
+    nombre?: string;
+    cantidad: number;
+    precioUnitario: number;
+    total: number;
+  }[];
   subtotal: number;
   iva: number;
   percepciones: number;
   descuentos: number;
   total: number;
+}
+
+/** `articulos.codigo` es `varchar(64)` en el back. */
+export const LARGO_CODIGO = 64;
+/** `articulos.nombre` es `varchar(255)` en el back. */
+export const LARGO_NOMBRE = 255;
+
+/**
+ * Normaliza un texto editable de artículo (`codigo` / `nombre`) para el payload.
+ *
+ * Dos cosas que sólo importan desde que estos campos viajan al back:
+ *
+ *   - **Vacío devuelve `undefined`, no `''`.** `JSON.stringify` descarta las claves
+ *     `undefined`, así que el campo no llega y el back conserva el valor que ya tenía
+ *     (aplica sólo lo que viene definido). Son columnas NOT NULL: MySQL acepta la cadena
+ *     vacía, de modo que sin esto una celda borrada por accidente dejaba el artículo sin
+ *     código — y el código es lo que el ERP usa para identificarlo. Vaciar el campo nunca
+ *     es una operación válida, así que conservar el anterior es la respuesta correcta.
+ *   - **Se corta al largo de la columna.** Las celdas de la grilla no tienen `maxLength`;
+ *     con MySQL en modo estricto un pegado más largo que la columna es un error 1406 y el
+ *     PATCH devuelve 500 en medio de la aprobación.
+ */
+export function textoArticulo(valor: unknown, largoMax: number): string | undefined {
+  const limpio = String(valor ?? '').trim();
+  return limpio ? limpio.slice(0, largoMax) : undefined;
 }
 
 /**
