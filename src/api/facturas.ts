@@ -17,3 +17,15 @@ export async function approveFactura(id: UUID): Promise<void> {
   await api.post<void>(`/facturas/submit/${id}`);
 }
 
+/**
+ * Carga la factura ENTERA (todos sus remitos) de forma atómica.
+ *
+ * El back marca todos los remitos como cargados en una transacción, o ninguno. Si un
+ * remito choca con una factura ya cargada (mismo proveedor + Nº factura + Nº remito),
+ * responde 409 `FACTURA_ALREADY_LOADED` y no notifica al cliente externo. La carga de
+ * una factura no puede ser parcial.
+ */
+export async function submitFacturaBatch(remitoIds: UUID[]): Promise<void> {
+  await api.post<void>('/facturas/submit-batch', { remitoIds });
+}
+

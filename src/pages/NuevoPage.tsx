@@ -4,7 +4,7 @@ import { useAuth } from '../context/auth-context';
 import { permsFor } from '../utils/roles';
 import { createFactura } from '../api/facturas';
 import { remitosApi, textoArticulo, LARGO_CODIGO, LARGO_NOMBRE, type UpdateItemsInput } from '../api/remitos';
-import { approveFactura } from '../api/facturas';
+import { submitFacturaBatch } from '../api/facturas';
 import { ApiError } from '../api/client';
 import { STAGES_EXTRACCION, useProceso } from '../hooks/useProceso';
 import type { ProcesoStage } from '../types/events';
@@ -99,6 +99,9 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
   const [remitosCargados, setRemitosCargados] = useState<Remito[]>(() => loadStored(STORAGE_KEY));
   const [originalRemitos, setOriginalRemitos] = useState<Remito[]>(() => loadStored(ORIGINAL_KEY));
   const [remitoSel, setRemitoSel] = useState<string | null>(null);
+  // Remito que el back marcó como duplicado (factura ya cargada). Se resalta en rojo y
+  // se limpia al re-subir, descartar, cargar bien o editar su Nº.
+  const [duplicadoRemitoId, setDuplicadoRemitoId] = useState<string | null>(null);
   const [editCell, setEditCell] = useState<{ remitoId: string; itemId: string; field: keyof Articulo } | null>(null);
   const [editHeader, setEditHeader] = useState<{ id: string; field: 'facturaNro' | 'remitoNro' } | null>(null);
   // Edición de un monto de cabecera (subtotal/iva/percepciones/descuentos/total) del
@@ -221,6 +224,7 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
     setRemitosCargados([]);
     setOriginalRemitos([]);
     setRemitoSel(null);
+    setDuplicadoRemitoId(null);
     try {
       if (!file) throw new Error('No hay archivo PDF seleccionado');
       const { jobId: nuevoJobId } = await createFactura(file, sucursalId, proveedorId);
@@ -345,6 +349,10 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
     setRemitosCargados((prev) =>
       prev.map((r) => (applyToAll || r.id === remitoId ? { ...r, [field]: normalizado } : r)),
     );
+    // El operador está corrigiendo el número: se saca el resaltado de duplicado. Si editó
+    // el Nº de factura (compartido) se limpia para todos; si fue el Nº de remito, sólo ese.
+    if (applyToAll || field === 'facturaNro') setDuplicadoRemitoId(null);
+    else if (remitoId === duplicadoRemitoId) setDuplicadoRemitoId(null);
   }
 
   // Cerrar la edición de una celda no persiste nada: el valor ya se aplicó localmente
@@ -386,7 +394,10 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
   });
 
   async function handleProcesar() {
-    if (scope.length === 0) return;
+    // La factura se carga ENTERA: siempre todos los remitos del PDF, no el subconjunto
+    // resaltado (`scope`). El resaltado es sólo visual; la carga no puede ser parcial.
+    const aCargar = remitosCargados;
+    if (aCargar.length === 0) return;
     setApproving(true);
     setErrorMsg(null);
     try {
@@ -414,7 +425,7 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
       // Se compara el PAYLOAD contra el original, no el remito entero: `isDirty` mira
       // el JSON completo (incluidos los artículos, que no van en este PATCH) y además
       // no ve el caso "no lo editaron pero la normalización lo cambia".
-      const editados = scope.filter((r) => {
+      const editados = aCargar.filter((r) => {
         const orig = originalById[r.id];
         if (!orig) return true;
         const p = payloadDe(r);
@@ -424,13 +435,17 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
         await Promise.all(editados.map((r) => remitosApi.update(r.id, payloadDe(r))));
       }
       // Persistimos ítems y montos (cantidades, precios, subtotal/IVA/percep/bonif/total)
-      // ANTES de aprobar: la validación contra la orden de compra que dispara el submit
+      // ANTES de cargar: la validación contra la orden de compra que dispara el submit
       // corre sobre los artículos ya guardados, y el webhook al cliente lee estos montos.
       // Se manda una sola vez por remito con lo que quedó en pantalla (ya recalculado),
       // en vez de un PATCH por cada tecla como antes (que además mandaba mal los campos).
-      await Promise.all(scope.map((r) => remitosApi.updateItems(r.id, itemsPayloadDe(r))));
-      await Promise.all(scope.map((r) => approveFactura(r.id)));
-      setSuccessMsg('Comprobante(s) aprobado(s) correctamente.');
+      await Promise.all(aCargar.map((r) => remitosApi.updateItems(r.id, itemsPayloadDe(r))));
+      // Carga ATÓMICA de la factura entera: o se cargan todos los remitos, o ninguno.
+      // Si un remito choca con una factura ya cargada, el back devuelve 409 sin cambiar
+      // nada ni notificar al cliente externo, y el catch deja el comprobante en pantalla.
+      await submitFacturaBatch(aCargar.map((r) => r.id));
+      setSuccessMsg('Factura cargada correctamente.');
+      setDuplicadoRemitoId(null);
       setRemitosCargados([]);
       setOriginalRemitos([]);
       setRemitoSel(null);
@@ -438,6 +453,15 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
       setStatus('idle');
       reloadRemitos();
     } catch (e) {
+      // Factura ya cargada: el back manda en `details` el remito EN PANTALLA que choca.
+      // Lo resaltamos en rojo (y lo enfocamos) para que el operador sepa cuál corregir.
+      if (e instanceof ApiError && e.code === 'FACTURA_ALREADY_LOADED') {
+        const det = e.details as { remitoId?: string } | undefined;
+        if (det?.remitoId) {
+          setDuplicadoRemitoId(det.remitoId);
+          setRemitoSel(det.remitoId);
+        }
+      }
       setErrorMsg(e instanceof Error ? e.message : 'No se pudo procesar el comprobante');
     } finally {
       setApproving(false);
@@ -466,6 +490,8 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
       // Conservamos solo los que fallaron de verdad (y sus snapshots) para reintentar.
       setRemitosCargados(fallidos);
       setOriginalRemitos((prev) => prev.filter((r) => idsFallidos.has(r.id)));
+      // Si el remito duplicado se descartó, se saca el resaltado.
+      setDuplicadoRemitoId((cur) => (cur && idsFallidos.has(cur) ? cur : null));
       if (fallidos.length === 0) {
         setRemitoSel(null);
         setStatus('idle');
@@ -811,6 +837,7 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
                 {remitosCargados.map((r, i) => {
                   const { color, light } = colorFor(i);
                   const active = remitoSel === r.id;
+                  const duplicado = duplicadoRemitoId === r.id;
                   if (editHeader?.field === 'remitoNro' && editHeader.id === r.id) {
                     return (
                       <input
@@ -838,7 +865,9 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
                       key={r.id}
                       onClick={() => setRemitoSel((cur) => (cur === r.id ? null : r.id))}
                       onDoubleClick={() => setEditHeader({ id: r.id, field: 'remitoNro' })}
-                      title="Clic: marcar artículos · Doble clic: editar Nº"
+                      title={duplicado
+                        ? 'Esta factura ya fue cargada para el proveedor (Nº factura + Nº remito). Corregí el número o descartá el comprobante.'
+                        : 'Clic: marcar artículos · Doble clic: editar Nº'}
                       style={{
                         display: 'inline-flex',
                         alignItems: 'center',
@@ -849,13 +878,20 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
                         fontSize: 13,
                         fontWeight: 700,
                         cursor: 'pointer',
-                        border: `1px solid ${active ? color : 'var(--border-2)'}`,
-                        background: active ? light : '#fff',
-                        color: active ? color : '#3a4352',
+                        // El rojo del duplicado manda por encima del resaltado azul de selección.
+                        border: `1px solid ${duplicado ? 'var(--err)' : active ? color : 'var(--border-2)'}`,
+                        background: duplicado ? 'var(--err-weak)' : active ? light : '#fff',
+                        color: duplicado ? 'var(--err)' : active ? color : '#3a4352',
                       }}
                     >
-                      <span style={{ width: 9, height: 9, flex: 'none', borderRadius: '50%', background: color }} />
+                      <span style={{ width: 9, height: 9, flex: 'none', borderRadius: '50%', background: duplicado ? 'var(--err)' : color }} />
                       <span>{r.remitoNro ? formatNroComprobante(r.remitoNro) : '(sin número)'}</span>
+                      {duplicado && (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" style={{ flex: 'none' }} aria-hidden>
+                          <path d="M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+                          <path d="M12 9v4M12 17h.01" />
+                        </svg>
+                      )}
                     </button>
                   );
                 })}
@@ -925,18 +961,18 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
               </>
             )}
             <button
-              disabled={scope.length === 0 || approving}
+              disabled={remitosCargados.length === 0 || approving}
               onClick={() => setConfirmProcesar(true)}
               style={{
                 marginTop: 8,
                 height: 46,
                 borderRadius: 9,
                 border: 'none',
-                background: scope.length === 0 || approving ? '#9bbfa8' : 'var(--ok)',
+                background: remitosCargados.length === 0 || approving ? '#9bbfa8' : 'var(--ok)',
                 color: '#fff',
                 fontWeight: 700,
                 fontSize: 15,
-                cursor: scope.length === 0 || approving ? 'not-allowed' : 'pointer',
+                cursor: remitosCargados.length === 0 || approving ? 'not-allowed' : 'pointer',
               }}
             >
               {approving ? 'Procesando…' : 'Procesar factura'}
@@ -945,19 +981,23 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
         </section>
 
         {confirmProcesar && (() => {
-          const provNombre = proveedores.find((p) => p.id === proveedorId)?.nombre ?? scope[0]?.proveedor?.nombre ?? '—';
-          const single = scope.length === 1 ? scope[0] : null;
+          // El modal muestra la factura ENTERA (todos los remitos), que es lo que se
+          // carga, sin importar el resaltado.
+          const provNombre = proveedores.find((p) => p.id === proveedorId)?.nombre ?? remitosCargados[0]?.proveedor?.nombre ?? '—';
+          const facturaTotal = remitosCargados.reduce((a, r) => a + Number(r.total || 0), 0);
+          const single = remitosCargados.length === 1 ? remitosCargados[0] : null;
           const rows: [string, string][] = single
             ? [
                 ['Nº Factura', formatNroComprobante(single.facturaNro)],
                 ['Nº Remito', formatNroComprobante(single.remitoNro)],
                 ['Proveedor', provNombre],
-                ['Total', money(totals.total)],
+                ['Total', money(single.total)],
               ]
             : [
-                ['Comprobantes', String(scope.length)],
+                ['Nº Factura', formatNroComprobante(remitosCargados[0]?.facturaNro)],
+                ['Remitos', String(remitosCargados.length)],
                 ['Proveedor', provNombre],
-                ['Total', money(totals.total)],
+                ['Total', money(facturaTotal)],
               ];
           return (
             <ConfirmDialog

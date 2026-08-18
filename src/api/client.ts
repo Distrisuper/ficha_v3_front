@@ -16,9 +16,15 @@ export function clearToken() {
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /** Código estable del back (ver ErrorCode). Permite ramificar sin mirar el texto. */
+  code?: string;
+  /** Detalle seguro del back (ej. el remito duplicado en FACTURA_ALREADY_LOADED). */
+  details?: unknown;
+  constructor(status: number, message: string, code?: string, details?: unknown) {
     super(message);
     this.status = status;
+    this.code = code;
+    this.details = details;
   }
 }
 
@@ -63,13 +69,17 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
   if (!res.ok) {
     let message = `Error ${res.status} en ${path}`;
+    let code: string | undefined;
+    let details: unknown;
     try {
       const body = await res.json();
       message = body?.message || message;
+      code = body?.code;
+      details = body?.details;
     } catch {
       // sin body json, mantenemos el mensaje genérico
     }
-    throw new ApiError(res.status, Array.isArray(message) ? message.join(', ') : message);
+    throw new ApiError(res.status, Array.isArray(message) ? message.join(', ') : message, code, details);
   }
 
   const contentType = res.headers.get('content-type') || '';
