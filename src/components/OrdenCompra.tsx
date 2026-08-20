@@ -93,11 +93,11 @@ export type EstadoMatch = 'procesando' | 'match' | 'sin-match' | 'sin-verificar'
  * Lo que NO puede pasar es que "sin verificar" sea rojo: un rojo que no significa
  * nada hace que el operador desconfíe de los rojos que sí importan.
  */
-const PALETA: Record<EstadoMatch, { color: string; fondo: string; borde: string }> = {
-  procesando: { color: 'var(--warn)', fondo: '#fdf8ec', borde: '#f3dca6' },
-  'sin-verificar': { color: 'var(--warn)', fondo: '#fdf8ec', borde: '#f3dca6' },
-  match: { color: 'var(--ok)', fondo: '#eefaf2', borde: '#bfe6ce' },
-  'sin-match': { color: 'var(--err)', fondo: 'var(--err-weak)', borde: '#f0c6c6' },
+const PALETA: Record<EstadoMatch, { color: string; fondo: string; fondoTooltip: string; borde: string }> = {
+  procesando: { color: 'var(--warn)', fondo: '#fdf8ec', fondoTooltip: '#c99c3d', borde: '#f3dca6' },
+  'sin-verificar': { color: 'var(--warn)', fondo: '#fdf8ec', fondoTooltip: '#c99c3d', borde: '#f3dca6' },
+  match: { color: 'var(--ok)', fondo: '#eefaf2', fondoTooltip: '#25a54f', borde: '#bfe6ce' },
+  'sin-match': { color: 'var(--err)', fondo: 'var(--err-weak)', fondoTooltip: '#d4412d', borde: '#f0c6c6' },
 };
 
 const TOOLTIPS: Record<'precio' | 'stock', Record<EstadoMatch, string>> = {
@@ -125,8 +125,9 @@ function estadoDeFlag(flag: boolean | null | undefined): EstadoMatch {
 const ANCHO_TOOLTIP = 220;
 
 /**
- * Icono del semáforo con su tooltip. La burbuja `fixed` la resuelve `Tooltip`;
- * acá sólo se le da la caja de color según la paleta del estado.
+ * Icono del semáforo con su tooltip. La burbuja `fixed` la resuelve `Tooltip`
+ * (compartido con las advertencias por campo); acá sólo se le da la caja de color
+ * según la paleta del estado.
  */
 function IconoConTooltip({
   estado,
@@ -154,6 +155,7 @@ function IconoConTooltip({
         color: paleta.color,
         cursor: 'help',
       }}
+      fondo={paleta.fondoTooltip}
     >
       {children}
     </Tooltip>
