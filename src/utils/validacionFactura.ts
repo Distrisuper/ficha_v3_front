@@ -133,7 +133,7 @@ export function validarRemito(r: Remito, etiqueta?: string): Advertencia[] {
     push('error', 'sin-items', 'El comprobante no tiene artículos cargados.');
   }
 
-  items.forEach((it, i) => {
+  items.forEach((it) => {
     // Referencia legible del ítem: el nombre si lo hay, sino el código, sino la
     // posición. Un mensaje que dice "Artículo sin nombre: falta el nombre" no ayuda.
     // const ref = String(it.codigo ?? '').trim() || String(it.codigo ?? '').trim() || `Artículo ${i + 1}`;
