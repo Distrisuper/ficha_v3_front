@@ -9,7 +9,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { Sidebar, type TabKey } from './components/Sidebar';
 import { Header } from './components/Header';
 import { FiltersBar } from './components/FiltersBar';
-import { TipoCompBar } from './components/TipoCompBar';
+import { TipoBienBar } from './components/TipoBienBar';
 import { NuevoPage } from './pages/NuevoPage';
 import { PendientesPage } from './pages/PendientesPage';
 import { HistorialPage } from './pages/HistorialPage';
@@ -30,7 +30,7 @@ function Shell() {
 
   const headerLeft =
     tab === 'nuevo' ? (
-      <TipoCompBar />
+      <TipoBienBar />
     ) : tab === 'pendientes' || tab === 'historial' ? (
       <FiltersBar value={filters} onChange={setFilters} />
     ) : null;
@@ -39,10 +39,8 @@ function Shell() {
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: 'var(--bg)' }}>
       <Sidebar tab={tab} onChange={setTab} collapsed={collapsed} onToggleCollapsed={() => setCollapsed((c) => !c)} pendCount={pendCount} />
       <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        {tab !== 'nuevo' && (
-          <Header userLabel={userLabel} empresaLabel={empresa?.nombre} onLogout={logout} left={headerLeft} />
-        )}
-        <div className="ds-scroll" style={{ flex: 1, overflow: 'auto', padding: '26px 30px' }}>
+        <Header userLabel={userLabel} empresaLabel={empresa?.nombre} onLogout={logout} left={headerLeft} />
+        <div className="ds-scroll" style={{ flex: 1, overflow: 'auto', padding: '16px 18px' }}>
           {/*
             Una frontera POR PANTALLA, no una sola global: un throw en render
             desmonta todo el árbol, y sin router el usuario quedaría en una página

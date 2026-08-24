@@ -22,7 +22,9 @@ export function Header({ userLabel, empresaLabel, onLogout, left }: Props) {
         alignItems: 'center',
         justifyContent: 'space-between',
         gap: 20,
-        padding: '10px 30px',
+        // Horizontal igual al del área de contenido (App.tsx) para que la barra de
+        // filtros del header quede alineada con las tablas de abajo.
+        padding: '10px 18px',
       }}
     >
       <div style={{ flex: 1, minWidth: 0 }}>{left}</div>

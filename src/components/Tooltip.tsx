@@ -1,4 +1,4 @@
-import { useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 
 /**
  * Tooltip de burbuja con posición `fixed`.
@@ -9,6 +9,11 @@ import { useRef, useState, type CSSProperties, type ReactNode } from 'react';
  * posicionado en ambos ejes (el spec computa `overflow-x: visible` a `auto` cuando
  * el otro eje no es visible). Con `absolute` la burbuja de la primera y la última
  * fila quedaba cortada.
+ *
+ * Se abre arriba del target y se voltea abajo si no entra (p. ej. en la barra
+ * superior, donde arriba no queda viewport). El volteo se decide midiendo la burbuja
+ * ya renderizada en un `useLayoutEffect` — antes del paint, así no parpadea — en vez
+ * de estimar su alto, que depende del largo del texto.
  *
  * El `title` nativo se mantiene como fallback en touch (donde no hay hover) y para
  * lectores de pantalla, siempre que el texto sea string.
@@ -36,7 +41,9 @@ export function Tooltip({
   wrapperStyle?: CSSProperties;
 }) {
   const ref = useRef<HTMLSpanElement | null>(null);
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const burbujaRef = useRef<HTMLSpanElement | null>(null);
+  const [pos, setPos] = useState<{ arriba: number; abajo: number; left: number } | null>(null);
+  const [volteada, setVolteada] = useState(false);
 
   const mostrar = () => {
     const caja = ref.current?.getBoundingClientRect();
@@ -47,14 +54,26 @@ export function Tooltip({
       Math.max(8, caja.left + caja.width / 2 - ancho / 2),
       window.innerWidth - ancho - 8,
     );
-    setPos({ top: caja.top, left });
+    setVolteada(false);
+    setPos({ arriba: caja.top, abajo: caja.bottom, left });
   };
+
+  const ocultar = () => {
+    setPos(null);
+    setVolteada(false);
+  };
+
+  useLayoutEffect(() => {
+    if (!pos || volteada) return;
+    const caja = burbujaRef.current?.getBoundingClientRect();
+    if (caja && caja.top < 8) setVolteada(true);
+  }, [pos, volteada]);
 
   const burbuja: CSSProperties = {
     position: 'fixed',
-    top: (pos?.top ?? 0) - 8,
+    top: volteada ? (pos?.abajo ?? 0) + 8 : (pos?.arriba ?? 0) - 8,
     left: pos?.left ?? 0,
-    transform: 'translateY(-100%)',
+    transform: volteada ? 'none' : 'translateY(-100%)',
     zIndex: 60,
     width: ancho,
     background: fondo,
@@ -75,11 +94,15 @@ export function Tooltip({
       ref={ref}
       title={typeof texto === 'string' ? texto : undefined}
       onMouseEnter={mostrar}
-      onMouseLeave={() => setPos(null)}
+      onMouseLeave={ocultar}
       style={{ display: 'inline-flex', ...wrapperStyle }}
     >
       {children}
-      {pos && <span style={burbuja}>{texto}</span>}
+      {pos && (
+        <span ref={burbujaRef} style={burbuja}>
+          {texto}
+        </span>
+      )}
     </span>
   );
 }
