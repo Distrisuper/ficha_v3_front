@@ -9,7 +9,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { Sidebar, type TabKey } from './components/Sidebar';
 import { Header } from './components/Header';
 import { FiltersBar } from './components/FiltersBar';
-import { TipoBienBar } from './components/TipoBienBar';
+import { CategoriaBar } from './components/CategoriaBar';
 import { NuevoPage } from './pages/NuevoPage';
 import { PendientesPage } from './pages/PendientesPage';
 import { HistorialPage } from './pages/HistorialPage';
@@ -30,7 +30,7 @@ function Shell() {
 
   const headerLeft =
     tab === 'nuevo' ? (
-      <TipoBienBar />
+      <CategoriaBar />
     ) : tab === 'pendientes' || tab === 'historial' ? (
       <FiltersBar value={filters} onChange={setFilters} />
     ) : null;

@@ -57,8 +57,29 @@ export interface Articulo {
    * nunca y un artículo sin verificar se ve igual que uno que no coincidió. El
    * front ya distingue los tres casos, así que la migración es sólo de DB.
    */
-  stockMatch: boolean | null; // la cantidad coincide con la orden de compra
+  /**
+   * La cantidad recibida coincide con el SALDO PENDIENTE de la línea de OC.
+   *
+   * Antes se comparaba contra la cantidad pedida original, así que una recepción
+   * parcial nunca daba match: si la OC pedía 10 y ya se habían recibido 9, un
+   * remito por la última unidad se marcaba en rojo. Ahora se compara contra lo
+   * que falta recibir, que es la pregunta real.
+   */
+  stockMatch: boolean | null;
   precioMatch: boolean | null; // el precio unitario coincide con la orden de compra
+  /**
+   * Línea de OC contra la que se imputó este artículo. `null` = no se encontró
+   * ninguna libre para su código.
+   *
+   * El modelo es 1 artículo → 1 línea de OC, garantizado por el índice único
+   * `articulos.OC_unique` del back: una línea de OC la toma un artículo y nada
+   * más que uno.
+   *
+   * Numéricos: como texto, un `"01907"` no matcheaba el `1907` que devuelve el
+   * ERP y la imputación se perdía en silencio.
+   */
+  OCNumero: number | null;
+  OCLinea: number | null;
   precio_unitario: number;
   total_unitario: number;
   remitoId: UUID;

@@ -11,6 +11,7 @@ import { Tooltip } from '../components/Tooltip';
 import { BadgeOrdenCompra, IconosMatch, Spinner } from '../components/OrdenCompra';
 import { formatNroComprobante } from '../utils/comprobante';
 import {
+  advertenciasOrdenCompra,
   claveCampo,
   indexarPorCampo,
   soloAvisos,
@@ -71,11 +72,36 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
     return out;
   }, [pendientes]);
 
+  // Avisos del cruce contra la orden de compra, por remito.
+  //
+  // Se calculan para TODAS las cards, no sólo para las que van a mandar la factura:
+  // el aviso apunta a la carga de mercadería a stock, y a esa altura la factura ya
+  // está cargada (`facturaCargada === true`), justo el caso que `advertenciasPorRemito`
+  // excluye.
+  //
+  // Se omiten los remitos con la consulta de OC en vuelo: mientras está procesando
+  // ninguno de los dos flags es confiable (mismo criterio que `IconosMatch`), y avisar
+  // sobre un veredicto que puede cambiar en el próximo evento del stream es peor que
+  // no avisar.
+  const advOrdenCompraPorRemito = useMemo(() => {
+    const out: Record<string, Advertencia[]> = {};
+    for (const r of pendientes) {
+      if (r.jobId && ordenCompraPorJob[r.jobId] === 'procesando') continue;
+      const avisos = advertenciasOrdenCompra(r);
+      if (avisos.length > 0) out[r.id] = avisos;
+    }
+    return out;
+  }, [pendientes, ordenCompraPorJob]);
+
   // Índice campo → mensajes, para pintar de amarillo cada dato con problema y mostrar el
   // motivo en un tooltip (reemplaza el cartel amarillo que antes iba arriba de la card).
   const advIndex = useMemo(
-    () => indexarPorCampo(Object.values(advertenciasPorRemito).flat()),
-    [advertenciasPorRemito],
+    () =>
+      indexarPorCampo([
+        ...Object.values(advertenciasPorRemito).flat(),
+        ...Object.values(advOrdenCompraPorRemito).flat(),
+      ]),
+    [advertenciasPorRemito, advOrdenCompraPorRemito],
   );
   const warnFor = (remitoId: string, campo: CampoAdvertencia, articuloId?: string): string[] =>
     (advIndex.get(claveCampo(remitoId, campo, articuloId)) ?? []).map((a) => a.mensaje);
@@ -442,6 +468,7 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                     const warnNombre = warnFor(r.id, 'nombre', it.id);
                     const warnCodigo = warnFor(r.id, 'codigo', it.id);
                     const warnCantidad = warnFor(r.id, 'cantidad', it.id);
+                    const warnOc = warnFor(r.id, 'orden-compra', it.id);
                     return (
                       <div
                         key={it.id}
@@ -452,6 +479,9 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                           gap: 12,
                           padding: '10px 0',
                           borderTop: '1px solid #f2f4f8',
+                          // Tinte ámbar de toda la fila para el ítem sin respaldo de OC:
+                          // el aviso es del artículo entero, no de una celda.
+                          background: warnOc.length ? '#fdf9f0' : undefined,
                           opacity: editing && !checked ? 0.45 : 1,
                           transition: 'opacity .12s ease',
                         }}
@@ -506,6 +536,13 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                               })()
                             ) : null}
                           </div>
+                          {/*
+                            El icono va en esta columna (`flex: 1`) y no en el grupo de
+                            la derecha: cualquier cosa agregada allá corre el badge de
+                            cantidad y deja las columnas desalineadas entre filas — el
+                            mismo problema que documenta el `minWidth` de más abajo.
+                          */}
+                          {warnOc.length > 0 && conAdvertencia(warnOc, <IconoSinOrdenCompra />)}
                         </div>
                         <span style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 'none' }}>
                           {/*
@@ -518,6 +555,8 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                             estado={ocProcesando ? 'procesando' : 'resuelto'}
                             precioMatch={it.precioMatch}
                             stockMatch={it.stockMatch}
+                            ocNumero={it.OCNumero}
+                            ocLinea={it.OCLinea}
                           />
                           {/*
                             minWidth fijo + tabular-nums: sin esto el ancho del
@@ -668,6 +707,15 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
         const advertencias = esFactura ? advertenciasPorRemito[r.id] ?? [] : [];
         const errores = soloErrores(advertencias);
         const avisos = soloAvisos(advertencias);
+        // Avisos de orden de compra: sólo en el flujo de stock, y sólo de los artículos
+        // que se están cargando — la selección puede ser un subconjunto, y avisar sobre
+        // un ítem que queda afuera de esta carga es ruido.
+        const seleccionados = getSelected(r);
+        const avisosOc = esFactura
+          ? []
+          : (advOrdenCompraPorRemito[r.id] ?? []).filter(
+              (a) => !a.articuloId || seleccionados.has(a.articuloId),
+            );
         const rows: [string, string][] = esFactura
           ? [
               ['Nº Factura', formatNroComprobante(r.facturaNro)],
@@ -678,7 +726,7 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
           : [
               ['Nº Remito', formatNroComprobante(r.remitoNro)],
               ['Proveedor', provName(r)],
-              ['Items', String(totalUnidades(r, getSelected(r)))],
+              ['Items', String(totalUnidades(r, seleccionados))],
             ];
         return (
           <ConfirmDialog
@@ -711,6 +759,15 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                 </div>
                 <PanelAdvertencias advertencias={errores} titulo="Hay que corregir esto antes de cargar" />
                 <PanelAdvertencias advertencias={avisos} titulo="Tené en cuenta" />
+                <PanelAdvertencias
+                  advertencias={avisosOc}
+                  titulo={
+                    avisosOc.length === 1
+                      ? 'Un artículo no corresponde a una orden de compra'
+                      : `${avisosOc.length} artículos no corresponden a una orden de compra`
+                  }
+                  nota="Se pueden cargar igual, pero ese stock entra sin una orden de compra que lo respalde."
+                />
               </div>
             }
           />
@@ -814,6 +871,36 @@ function HeadCell({ label, value, big, warn }: { label: string; value: string; b
       <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.5px', color: 'var(--muted-2)' }}>{label}</div>
       {advertido ? conAdvertencia(warn!, valor) : valor}
     </div>
+  );
+}
+
+/**
+ * Marca del ítem que no tiene respaldo de orden de compra. Va dentro de un
+ * `conAdvertencia`, que le pone el tooltip con el motivo.
+ */
+function IconoSinOrdenCompra() {
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 20,
+        height: 20,
+        flex: 'none',
+        borderRadius: 5,
+        border: '1px solid #f3dca6',
+        background: '#fdf8ec',
+        color: 'var(--warn)',
+        cursor: 'help',
+      }}
+    >
+      <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9" />
+        <path d="M8 7h6M8 11h4" />
+        <path d="M18 10v5M18 19h.01" />
+      </svg>
+    </span>
   );
 }
 

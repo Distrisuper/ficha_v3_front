@@ -100,6 +100,12 @@ const PALETA: Record<EstadoMatch, { color: string; fondo: string; fondoTooltip: 
   'sin-match': { color: 'var(--err)', fondo: 'var(--err-weak)', fondoTooltip: '#d4412d', borde: '#f0c6c6' },
 };
 
+/**
+ * Textos base. La cantidad se compara contra el SALDO PENDIENTE de la línea de OC
+ * (lo que falta recibir), no contra la cantidad pedida original: con una recepción
+ * parcial, comparar contra lo pedido nunca daba match y el operador veía rojos que
+ * no significaban nada.
+ */
 const TOOLTIPS: Record<'precio' | 'stock', Record<EstadoMatch, string>> = {
   precio: {
     procesando: 'Precio: verificando contra la orden de compra…',
@@ -109,11 +115,30 @@ const TOOLTIPS: Record<'precio' | 'stock', Record<EstadoMatch, string>> = {
   },
   stock: {
     procesando: 'Cantidad: verificando contra la orden de compra…',
-    match: 'Cantidad: coincide con la orden de compra',
-    'sin-match': 'Cantidad: NO coincide con la orden de compra (o el artículo no figura en ella)',
+    match: 'Cantidad: coincide con el saldo pendiente de la orden de compra',
+    'sin-match':
+      'Cantidad: NO coincide con el saldo pendiente de la orden de compra (o el artículo no figura en ella)',
     'sin-verificar': 'Cantidad: pendiente de verificar. Se controla al cargar la factura.',
   },
 };
+
+/**
+ * Agrega la referencia a la línea imputada.
+ *
+ * Saber CONTRA QUÉ se comparó es la mitad de la información: un rojo sin la línea
+ * de OC no le dice al operador dónde mirar, y un verde sin ella no se puede
+ * auditar. Cuando el artículo no tomó ninguna línea, eso también es el dato.
+ */
+function conReferenciaOc(
+  texto: string,
+  estado: EstadoMatch,
+  oc: { numero: number | null; linea: number | null },
+): string {
+  if (estado === 'procesando' || estado === 'sin-verificar') return texto;
+  if (oc.numero == null) return `${texto}\nNo se imputó a ninguna línea de orden de compra.`;
+  const linea = oc.linea != null ? ` línea ${oc.linea}` : '';
+  return `${texto}\nImputado a la OC ${oc.numero}${linea}.`;
+}
 
 /** `null`/`undefined` = sin verificar. Ver la nota de `Articulo` en types/api.ts. */
 function estadoDeFlag(flag: boolean | null | undefined): EstadoMatch {
@@ -191,20 +216,32 @@ export function IconosMatch({
   estado,
   precioMatch,
   stockMatch,
+  ocNumero = null,
+  ocLinea = null,
 }: {
   estado: 'procesando' | 'resuelto';
   precioMatch: boolean | null | undefined;
   stockMatch: boolean | null | undefined;
+  /** Línea de OC imputada. Se muestra en el tooltip para poder auditar el veredicto. */
+  ocNumero?: number | null;
+  ocLinea?: number | null;
 }) {
   const estadoPrecio: EstadoMatch = estado === 'procesando' ? 'procesando' : estadoDeFlag(precioMatch);
   const estadoStock: EstadoMatch = estado === 'procesando' ? 'procesando' : estadoDeFlag(stockMatch);
+  const oc = { numero: ocNumero, linea: ocLinea };
 
   return (
     <span style={{ display: 'inline-flex', gap: 6, flex: 'none' }}>
-      <IconoConTooltip estado={estadoPrecio} texto={TOOLTIPS.precio[estadoPrecio]}>
+      <IconoConTooltip
+        estado={estadoPrecio}
+        texto={conReferenciaOc(TOOLTIPS.precio[estadoPrecio], estadoPrecio, oc)}
+      >
         <IconoPrecio />
       </IconoConTooltip>
-      <IconoConTooltip estado={estadoStock} texto={TOOLTIPS.stock[estadoStock]}>
+      <IconoConTooltip
+        estado={estadoStock}
+        texto={conReferenciaOc(TOOLTIPS.stock[estadoStock], estadoStock, oc)}
+      >
         <IconoStock />
       </IconoConTooltip>
     </span>

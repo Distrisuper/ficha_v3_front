@@ -1,24 +1,39 @@
 import { useState, type CSSProperties } from 'react';
 import { Tooltip } from './Tooltip';
 
-/** Clase de lo que se está cargando en el comprobante. */
-export type TipoBien = 'cambio' | 'uso' | 'servicio';
+/** Categoría de lo que se está cargando en el comprobante. */
+export type CategoriaCarga = 'proveedores' | 'servicios' | 'otros';
 
 interface Opcion {
-  key: TipoBien;
+  key: CategoriaCarga;
   label: string;
-  /** Las opciones deshabilitadas muestran "Próximamente" al pasar el mouse. */
+  /** Texto de la burbuja al pasar el mouse. Todas las opciones tienen uno. */
+  tooltip: string;
+  /** Ancho de la burbuja, según el largo del texto. */
+  anchoTooltip: number;
   habilitada: boolean;
 }
 
+const PROXIMAMENTE = 'Próximamente';
+
 const OPCIONES: Opcion[] = [
-  { key: 'cambio', label: 'Bien de cambio', habilitada: true },
-  { key: 'uso', label: 'Bien de uso', habilitada: false },
-  { key: 'servicio', label: 'Servicio', habilitada: false },
+  {
+    key: 'proveedores',
+    label: 'Proveedores',
+    tooltip: 'Bienes/mercadería comercializados por la empresa',
+    anchoTooltip: 210,
+    habilitada: true,
+  },
+  { key: 'servicios', label: 'Servicios', tooltip: PROXIMAMENTE, anchoTooltip: 120, habilitada: false },
+  { key: 'otros', label: 'Otros', tooltip: PROXIMAMENTE, anchoTooltip: 120, habilitada: false },
 ];
 
+// Gris de las burbujas. Va en gris y no en el azul por defecto del Tooltip para que
+// no compita con la pastilla del propio selector, que ya usa azul.
+const TOOLTIP_GRIS = '#5b6472';
+
 /**
- * Selector segmentado de tipo de bien, en la barra superior de la pantalla "Nuevo".
+ * Selector segmentado de categoría, en la barra superior de la pantalla "Nuevo".
  *
  * La pastilla azul es un elemento aparte posicionado en absoluto y desplazado con
  * `translateX`, no el fondo del botón activo: así el cambio de opción se anima con una
@@ -26,11 +41,11 @@ const OPCIONES: Opcion[] = [
  * son de ancho igual (`1fr` cada una), lo que hace que `translateX(100%)` caiga exacto
  * sobre la columna siguiente sin medir nada con refs.
  *
- * Hoy sólo "Bien de cambio" está habilitada, así que el deslizamiento no se puede
+ * Hoy sólo "Proveedores" está habilitada, así que el deslizamiento no se puede
  * disparar todavía; queda listo para cuando se habiliten las otras dos.
  */
-export function TipoBienBar() {
-  const [valor, setValor] = useState<TipoBien>('cambio');
+export function CategoriaBar() {
+  const [valor, setValor] = useState<CategoriaCarga>('proveedores');
   const activa = Math.max(0, OPCIONES.findIndex((o) => o.key === valor));
 
   return (
@@ -38,27 +53,22 @@ export function TipoBienBar() {
       <span style={{ ...pastilla, transform: `translateX(${activa * 100}%)` }} />
       {OPCIONES.map((o) => {
         const seleccionada = o.key === valor;
-        const boton = (
-          <button
-            type="button"
-            aria-pressed={seleccionada}
-            aria-disabled={!o.habilitada}
-            onClick={o.habilitada ? () => setValor(o.key) : undefined}
-            style={btn(seleccionada, o.habilitada)}
-          >
-            {o.label}
-          </button>
-        );
-        // Sin `disabled`: un botón deshabilitado no emite eventos de mouse y el
-        // tooltip nunca aparecería. `aria-disabled` + sin `onClick` lo deja inerte
-        // igual, y el hover sigue llegando al wrapper del Tooltip.
-        return o.habilitada ? (
-          <span key={o.key} style={celda}>
-            {boton}
-          </span>
-        ) : (
-          <Tooltip key={o.key} texto="Próximamente" ancho={130} wrapperStyle={celda}>
-            {boton}
+        return (
+          <Tooltip key={o.key} texto={o.tooltip} ancho={o.anchoTooltip} fondo={TOOLTIP_GRIS} wrapperStyle={celda}>
+            {/*
+              Sin `disabled`: un botón deshabilitado no emite eventos de mouse y el
+              tooltip nunca aparecería. `aria-disabled` + sin `onClick` lo deja inerte
+              igual, y el hover sigue llegando al wrapper del Tooltip.
+            */}
+            <button
+              type="button"
+              aria-pressed={seleccionada}
+              aria-disabled={!o.habilitada}
+              onClick={o.habilitada ? () => setValor(o.key) : undefined}
+              style={btn(seleccionada, o.habilitada)}
+            >
+              {o.label}
+            </button>
           </Tooltip>
         );
       })}
@@ -76,8 +86,8 @@ const wrap: CSSProperties = {
   padding: 2,
 };
 
-// Azul apagado (mismo tono que la burbuja del Tooltip) en vez de `--blue`: el control
-// vive en la barra superior y no debería competir con los botones de acción.
+// Azul apagado en vez de `--blue`: el control vive en la barra superior y no debería
+// competir con los botones de acción.
 const AZUL_APAGADO = '#5878b4';
 
 const pastilla: CSSProperties = {
