@@ -65,6 +65,82 @@ export function BadgeOrdenCompra({ estado }: { estado: EstadoOrdenCompra }) {
   );
 }
 
+// --- Aviso de artículos que no figuran en el sistema --------------------------
+
+/**
+ * Va en el encabezado de la card, al lado del badge de orden de compra.
+ *
+ * Separado de los semáforos de OC a propósito: son dos preguntas distintas. Los
+ * semáforos comparan contra la orden de compra; esto dice si el artículo existe
+ * en el catálogo del sistema, que es independiente de cualquier orden.
+ *
+ * Es INFORMATIVO: reporta el hecho y nada más. Qué pasa después con la carga no
+ * se decide acá.
+ */
+export function BadgeSinErp({ cantidad }: { cantidad: number }) {
+  if (cantidad <= 0) return null;
+  return (
+    <div
+      title={
+        `${cantidad} artículo(s) de este remito no figuran en el catálogo del sistema. ` +
+        'Verificar el código con el proveedor o darlo de alta si corresponde.'
+      }
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        height: 30,
+        padding: '0 12px',
+        borderRadius: 99,
+        border: '1px solid #f0c6c6',
+        background: 'var(--err-weak)',
+        color: 'var(--err)',
+        fontSize: 12.5,
+        fontWeight: 700,
+        whiteSpace: 'nowrap',
+        cursor: 'default',
+      }}
+    >
+      <IconoAlerta />
+      {cantidad === 1
+        ? '1 artículo no figura en el sistema'
+        : `${cantidad} artículos no figuran en el sistema`}
+    </div>
+  );
+}
+
+/**
+ * Marca por fila. `null` (sin verificar) no muestra nada: avisar sobre algo que no
+ * se verificó entrena al operador a ignorar el aviso.
+ */
+export function MarcaSinErp({ existeEnErp }: { existeEnErp: boolean | null | undefined }) {
+  if (existeEnErp !== false) return null;
+  return (
+    <Tooltip
+      texto={
+        'Este código no figura en el catálogo del sistema. Verificarlo con el proveedor o darlo ' +
+        'de alta si corresponde.'
+      }
+      ancho={240}
+      wrapperStyle={{
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 24,
+        height: 24,
+        flex: 'none',
+        borderRadius: 6,
+        border: '1px solid #f0c6c6',
+        background: 'var(--err-weak)',
+        color: 'var(--err)',
+        cursor: 'help',
+      }}
+      fondo="#d4412d"
+    >
+      <IconoAlerta />
+    </Tooltip>
+  );
+}
+
 function IconoAlerta() {
   return (
     <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" style={{ flex: 'none' }} aria-hidden>

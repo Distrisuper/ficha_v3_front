@@ -249,6 +249,41 @@ function refArticulo(it: Articulo): string {
  * Siempre `aviso`, nunca `error`: el remito se puede cargar igual: la consecuencia es
  * que ese stock entra sin respaldo de una orden de compra.
  */
+/**
+ * Artículos cuyo código no figura en el catálogo del sistema.
+ *
+ * Es una pregunta distinta de la de la orden de compra: los semáforos comparan
+ * cantidad y precio contra la OC, esto dice si el artículo existe, que es
+ * independiente de cualquier orden. Un artículo puede existir y no estar en
+ * ninguna OC, o estar en una OC y no tener equivalencia registrada.
+ *
+ * INFORMATIVO. Nivel `aviso` y no `error`, y el mensaje no dice qué va a pasar con
+ * la carga: eso se decide en otro lado y afirmarlo acá sería adelantarse.
+ *
+ * `existeEnErp === null` NO cuenta: es "sin verificar", y avisar sobre algo que no
+ * se verificó entrena al operador a ignorar el aviso.
+ */
+export function advertenciasExistenciaErp(r: Remito): Advertencia[] {
+  const inexistentes = (r.articulos ?? []).filter((it) => it.existeEnErp === false);
+  if (inexistentes.length === 0) return [];
+
+  return inexistentes.map((it) => ({
+    id: `${r.id}:${it.id}:existe-erp`,
+    nivel: 'aviso' as const,
+    mensaje:
+      `${refArticulo(it)}: el código no figura en el catálogo del sistema. ` +
+      'Verificarlo con el proveedor o darlo de alta si corresponde.',
+    remitoId: r.id,
+    articuloId: it.id,
+    campo: 'codigo' as const,
+  }));
+}
+
+/** Cuántos artículos del remito tienen un código que no figura en el sistema. */
+export function contarSinErp(r: Remito): number {
+  return (r.articulos ?? []).filter((it) => it.existeEnErp === false).length;
+}
+
 export function advertenciasOrdenCompra(r: Remito): Advertencia[] {
   return (r.articulos ?? [])
     .filter((it) => it.stockMatch === false || it.precioMatch === false)

@@ -8,10 +8,18 @@ import { applyFilters, type RemitoFilters } from '../utils/filtros';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { PanelAdvertencias } from '../components/PanelAdvertencias';
 import { Tooltip } from '../components/Tooltip';
-import { BadgeOrdenCompra, IconosMatch, Spinner } from '../components/OrdenCompra';
+import {
+  BadgeOrdenCompra,
+  BadgeSinErp,
+  IconosMatch,
+  MarcaSinErp,
+  Spinner,
+} from '../components/OrdenCompra';
 import { formatNroComprobante } from '../utils/comprobante';
 import {
+  advertenciasExistenciaErp,
   advertenciasOrdenCompra,
+  contarSinErp,
   claveCampo,
   indexarPorCampo,
   soloAvisos,
@@ -87,7 +95,10 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
     const out: Record<string, Advertencia[]> = {};
     for (const r of pendientes) {
       if (r.jobId && ordenCompraPorJob[r.jobId] === 'procesando') continue;
-      const avisos = advertenciasOrdenCompra(r);
+      // Dos avisos distintos que se resuelven en la misma etapa:
+      //   · no coincide con la OC  -> entra igual, al precio del remito
+      //   · no existe en el sistema -> NO entra con su código, va a reclasificar
+      const avisos = [...advertenciasOrdenCompra(r), ...advertenciasExistenciaErp(r)];
       if (avisos.length > 0) out[r.id] = avisos;
     }
     return out;
@@ -416,6 +427,12 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                   {mostrarSucursal && <HeadCell label="SUCURSAL" value={sucName(r)} />}
                   <HeadCell label="ESTADO" value={r.facturaCargada === true ? 'Factura cargada' : 'Remito Cargado'} />
                   {estadoOc && <BadgeOrdenCompra estado={estadoOc} />}
+                  {/*
+                    Sólo cuando la consulta al ERP terminó: mientras está en vuelo
+                    `existeEnErp` todavía no es confiable y el aviso podría
+                    desaparecer en el próximo evento del stream.
+                  */}
+                  {!ocProcesando && <BadgeSinErp cantidad={contarSinErp(r)} />}
                 </div>
                 <span style={{ fontSize: 13, color: 'var(--muted-2)', fontWeight: 600 }}>{fmtDate(r.fecha)}</span>
               </div>
@@ -558,6 +575,7 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                             ocNumero={it.OCNumero}
                             ocLinea={it.OCLinea}
                           />
+                          {!ocProcesando && <MarcaSinErp existeEnErp={it.existeEnErp} />}
                           {/*
                             minWidth fijo + tabular-nums: sin esto el ancho del
                             badge depende del número (165 vs 5) y los iconos de la

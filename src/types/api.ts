@@ -80,6 +80,22 @@ export interface Articulo {
    */
   OCNumero: number | null;
   OCLinea: number | null;
+  /**
+   * ¿Existe en el catálogo del ERP, con equivalencia para este proveedor?
+   *
+   * Es una pregunta DISTINTA de `stockMatch`/`precioMatch`, que comparan cantidad
+   * y precio contra la orden de compra. Esto dice si el artículo existe, y es
+   * independiente de cualquier orden: puede existir y no estar en ninguna OC, o
+   * estar en una OC y no tener equivalencia registrada para ese proveedor.
+   *
+   * Hoy es informativo — se muestra al operador y no condiciona la carga.
+   *
+   * `null` = todavía no se verificó (remitos anteriores a la migración, o la
+   * consulta al ERP falló). No es lo mismo que `false`.
+   */
+  existeEnErp: boolean | null;
+  /** Código interno del ERP, cuando existe. Es el que reconoce el operador. */
+  codigoErp: string | null;
   precio_unitario: number;
   total_unitario: number;
   remitoId: UUID;
