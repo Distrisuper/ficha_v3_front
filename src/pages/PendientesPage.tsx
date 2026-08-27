@@ -9,6 +9,11 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { PanelAdvertencias } from '../components/PanelAdvertencias';
 import { Tooltip } from '../components/Tooltip';
 import {
+  contenidoDesglosePercepciones,
+  estiloTooltipDesglose,
+  TOOLTIP_DESGLOSE_BG,
+} from '../components/DesglosePercepciones';
+import {
   BadgeOrdenCompra,
   BadgeSinErp,
   IconosMatch,
@@ -623,7 +628,14 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 8px', fontSize: 12.5, color: 'var(--muted-2)' }}>
                     <EcoInline k="Subtotal" v={money(subtotal)} warn={warnFor(r.id, 'subtotal')} />
                     {descuentos > 0 && <EcoInline k="Bonificaciones" v={'- ' + money(descuentos)} sep />}
-                    <EcoInline k="Percepciones" v={money(percepciones)} sep />
+                    <EcoInline
+                      k="Percepciones"
+                      v={money(percepciones)}
+                      sep
+                      // `[r]` y no el scope: acá cada card es UN remito, así que el
+                      // desglose es el suyo. En NuevoPage el pie suma varios.
+                      detalle={contenidoDesglosePercepciones([r], percepciones)}
+                    />
                     <EcoInline k="IVA" v={money(iva)} sep />
                   </div>
                 )}
@@ -843,26 +855,49 @@ function ResumenMatch({ items, procesando }: { items: Articulo[]; procesando: bo
   );
 }
 
-function EcoInline({ k, v, sep, warn }: { k: string; v: string; sep?: boolean; warn?: string[] }) {
+function EcoInline({
+  k,
+  v,
+  sep,
+  warn,
+  detalle,
+}: {
+  k: string;
+  v: string;
+  sep?: boolean;
+  warn?: string[];
+  /** Tooltip informativo (azul). Si hay `warn`, gana `warn`: un problema importa más. */
+  detalle?: ReactNode;
+}) {
   const advertido = (warn?.length ?? 0) > 0;
+  const conDetalle = !advertido && detalle != null;
   const valor = (
     <b
       style={{
         fontWeight: 700,
         color: advertido ? 'var(--warn)' : 'var(--ink-2)',
         fontVariantNumeric: 'tabular-nums',
-        cursor: advertido ? 'help' : undefined,
-        textDecoration: advertido ? 'underline dotted' : undefined,
-        textUnderlineOffset: advertido ? 3 : undefined,
+        cursor: advertido || conDetalle ? 'help' : undefined,
+        textDecoration: advertido || conDetalle ? 'underline dotted' : undefined,
+        textUnderlineOffset: advertido || conDetalle ? 3 : undefined,
       }}
     >
       {v}
     </b>
   );
+  const envuelto = advertido
+    ? conAdvertencia(warn!, valor)
+    : conDetalle
+      ? (
+        <Tooltip texto={detalle} ancho={320} fondo={TOOLTIP_DESGLOSE_BG} style={estiloTooltipDesglose}>
+          {valor}
+        </Tooltip>
+      )
+      : valor;
   return (
     <span style={{ whiteSpace: 'nowrap' }}>
       {sep && <span style={{ color: 'var(--muted-3)', marginRight: 8 }}>·</span>}
-      {k} {advertido ? conAdvertencia(warn!, valor) : valor}
+      {k} {envuelto}
     </span>
   );
 }

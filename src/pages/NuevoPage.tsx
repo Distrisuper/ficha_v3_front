@@ -10,6 +10,11 @@ import { STAGES_EXTRACCION, useProceso } from '../hooks/useProceso';
 import type { ProcesoStage } from '../types/events';
 import type { Articulo, Remito, RemitoTipo } from '../types/api';
 import { money } from '../utils/money';
+import {
+  contenidoDesglosePercepciones,
+  estiloTooltipDesglose,
+  TOOLTIP_DESGLOSE_BG,
+} from '../components/DesglosePercepciones';
 import { round2, toNumero } from '../utils/numero';
 import { colorFor } from '../utils/colors';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -294,6 +299,14 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
     const total = scope.reduce((a, r) => a + Number(r.total || 0), 0);
     return { subtotal, percepciones, descuentos, iva, total };
   }, [scope]);
+
+  // Desglose para el tooltip del pie. `null` si no hay nada que aportar, y de eso
+  // depende que el número no aparezca subrayado prometiendo información que no
+  // existe (percepciones en 0, o comprobantes previos a la clasificación).
+  const tooltipPercepciones = useMemo(
+    () => contenidoDesglosePercepciones(scope, totals.percepciones),
+    [scope, totals.percepciones],
+  );
 
   // Verificaciones previas a la carga. Se corren sobre `scope` (lo que realmente se va
   // Se valida la factura ENTERA (`remitosCargados`), no el subconjunto resaltado: la
@@ -994,6 +1007,7 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
                   onStartEdit={() => remitoUnico && setEditAmount({ remitoId: remitoUnico.id, field: 'percepciones' })}
                   onChange={(v) => remitoUnico && editRemitoAmount(remitoUnico.id, 'percepciones', v)}
                   onCommit={() => setEditAmount(null)}
+                  detalle={tooltipPercepciones}
                 />
                 <EditableAmount
                   label="IVA:"
@@ -1120,16 +1134,28 @@ interface EditableAmountProps {
   onChange: (v: string) => void;
   onCommit: () => void;
   warn?: string[];
+  /**
+   * Contenido informativo para el tooltip (ej. el desglose de percepciones).
+   *
+   * Independiente de `warn`: `warn` es "este número puede estar mal" (ámbar),
+   * `detalle` es "este número se compone así" (azul). Si hay `warn`, gana `warn`:
+   * un problema tiene prioridad sobre información de contexto.
+   */
+  detalle?: ReactNode;
   /** Fila de total (grande y en azul). */
   big?: boolean;
 }
 
 /**
  * Fila de un monto del pie de factura. Muestra el valor formateado; con doble clic (si
- * `editable`) pasa a input para el override manual. Amarillo + tooltip si hay `warn`.
+ * `editable`) pasa a input para el override manual. Amarillo + tooltip si hay `warn`,
+ * azul + tooltip si hay `detalle`.
  */
-function EditableAmount({ label, value, rawValue, editable, editing, onStartEdit, onChange, onCommit, warn, big }: EditableAmountProps) {
+function EditableAmount({ label, value, rawValue, editable, editing, onStartEdit, onChange, onCommit, warn, detalle, big }: EditableAmountProps) {
   const advertido = (warn?.length ?? 0) > 0;
+  // `detalle` sólo se ofrece si no hay advertencia: dos tooltips sobre el mismo
+  // span se pisan, y el problema importa más que el desglose.
+  const conDetalle = !advertido && detalle != null;
   const filaStyle: CSSProperties = big
     ? { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 19, fontWeight: 800, color: 'var(--blue)' }
     : { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 14, color: 'var(--muted)' };
@@ -1139,13 +1165,15 @@ function EditableAmount({ label, value, rawValue, editable, editing, onStartEdit
   const display = (
     <span
       onDoubleClick={editable ? onStartEdit : undefined}
-      title={editable && !advertido ? 'Doble clic para editar' : undefined}
+      title={editable && !advertido && !conDetalle ? 'Doble clic para editar' : undefined}
       style={{
         fontVariantNumeric: 'tabular-nums',
         color: valorColor,
-        cursor: advertido ? 'help' : editable ? 'text' : 'default',
-        textDecoration: advertido ? 'underline dotted' : undefined,
-        textUnderlineOffset: advertido ? 3 : undefined,
+        // `help` también con detalle: es el affordance que ya usa el resto de la
+        // app (EcoInline, HeadCell) para "pasá el mouse que hay más".
+        cursor: advertido || conDetalle ? 'help' : editable ? 'text' : 'default',
+        textDecoration: advertido || conDetalle ? 'underline dotted' : undefined,
+        textUnderlineOffset: advertido || conDetalle ? 3 : undefined,
         fontWeight: big ? 800 : 600,
       }}
     >
@@ -1181,6 +1209,14 @@ function EditableAmount({ label, value, rawValue, editable, editing, onStartEdit
         />
       ) : advertido ? (
         <Tooltip texto={mensajesTooltip(warn!)} fondo={TOOLTIP_WARN_BG}>
+          {display}
+        </Tooltip>
+      ) : conDetalle ? (
+        // Más ancho que el default (240) porque cada línea lleva categoría +
+        // texto del proveedor + importe. Fondo gris claro con texto oscuro: es
+        // información de contexto, no una alerta, así que no compite con el ámbar
+        // de las advertencias ni con el azul de los tooltips de ayuda.
+        <Tooltip texto={detalle} ancho={320} fondo={TOOLTIP_DESGLOSE_BG} style={estiloTooltipDesglose}>
           {display}
         </Tooltip>
       ) : (

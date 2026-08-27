@@ -103,6 +103,22 @@ export interface Articulo {
   updatedAt: string;
 }
 
+/**
+ * Una percepción del comprobante, tal como la extrajo la IA.
+ *
+ * `nombre` es la categoría canónica (`PERC. IIBB BSAS`, `PERC. IVA`, ...) y es lo
+ * que el integrador traduce al código de percepción del ERP. `descripcion` es el
+ * texto crudo del PDF, y es lo que el operador reconoce cuando compara con el
+ * papel que tiene al lado — por eso el tooltip muestra los dos.
+ */
+export interface PercepcionDetalle {
+  id: UUID;
+  nombre: string;
+  descripcion: string;
+  monto: number;
+  orden: number;
+}
+
 export interface Remito {
   id: UUID;
   proveedorId: UUID;
@@ -116,7 +132,17 @@ export interface Remito {
   facturaCargada: boolean;
   estado: RemitoEstado;
   subtotal: number;
+  /** TOTAL de percepciones. Es lo que se muestra; el desglose va en el tooltip. */
   percepciones: number;
+  /**
+   * Desglose por percepción.
+   *
+   * Opcional porque no todos los endpoints lo traen: sólo los que hacen el join
+   * (`/remitos/own`, `/remitos/by-job/:id`, `/remitos` y el detalle). Ausente o
+   * vacío = no hay desglose y el tooltip no se muestra; NO significa que no haya
+   * percepciones, porque el total puede venir de un comprobante viejo.
+   */
+  percepcionesDetalle?: PercepcionDetalle[];
   descuentos: number;
   iva: number;
   total: number;
