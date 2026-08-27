@@ -33,7 +33,7 @@
  * por igualdad exacta convertiría ese redondeo en un aviso. La tolerancia de la línea
  * es más ajustada que la del total porque el error del total es acumulado.
  */
-import type { Remito } from '../types/api';
+import type { Articulo, Remito } from '../types/api';
 import { money } from './money';
 import { round2, toNumero } from './numero';
 import { FORMATO_ESPERADO, validarNroComprobante } from './comprobante';
@@ -63,7 +63,8 @@ export type CampoAdvertencia =
   | 'percepciones'
   | 'descuentos'
   | 'total'
-  | 'importes-cero';
+  | 'importes-cero'
+  | 'orden-compra';
 
 /** Campos que NO tienen un input propio y sólo se muestran en el modal. */
 const CAMPOS_SIN_INPUT: CampoAdvertencia[] = ['sin-items', 'importes-cero'];
@@ -215,6 +216,93 @@ export function validarRemito(r: Remito, etiqueta?: string): Advertencia[] {
   }
 
   return out;
+}
+
+/**
+ * Referencia legible de un artículo para los mensajes: código, descripción, o ambos.
+ */
+function refArticulo(it: Articulo): string {
+  const codigo = String(it.codigo ?? '').trim();
+  const nombre = String(it.nombre ?? '').trim();
+  if (codigo && nombre) return `${codigo} (${nombre})`;
+  return codigo || nombre || 'Artículo sin código ni descripción';
+}
+
+/**
+ * Avisos del cruce contra la orden de compra, uno por artículo observado.
+ *
+ * Va aparte de `validarRemito` porque responde otra pregunta y se dispara en otro
+ * momento: `validarRemito` mira la consistencia interna del comprobante antes de
+ * mandar la factura; esto mira el cruce contra la OC antes de mover mercadería a
+ * stock. Mezclarlos haría que los avisos de OC aparecieran en el modal de la
+ * factura, donde el operador no puede hacer nada con ellos todavía.
+ *
+ * **El mensaje dice "no figura … o no coincide" y no una sola de las dos cosas**
+ * porque los flags no permiten distinguirlas: `stockMatch`/`precioMatch` en `false`
+ * significan indistintamente "el artículo no está en la orden" y "está pero con otra
+ * cantidad o precio" (ver la nota de `Articulo` en types/api.ts). Afirmar una sola de
+ * las dos sería inventar información que el back no manda.
+ *
+ * `null` (sin verificar) NO genera aviso: reportar un problema que nadie comprobó es
+ * el camino más corto a que el operador deje de leer los avisos.
+ *
+ * Siempre `aviso`, nunca `error`: el remito se puede cargar igual: la consecuencia es
+ * que ese stock entra sin respaldo de una orden de compra.
+ */
+/**
+ * Artículos cuyo código no figura en el catálogo del sistema.
+ *
+ * Es una pregunta distinta de la de la orden de compra: los semáforos comparan
+ * cantidad y precio contra la OC, esto dice si el artículo existe, que es
+ * independiente de cualquier orden. Un artículo puede existir y no estar en
+ * ninguna OC, o estar en una OC y no tener equivalencia registrada.
+ *
+ * INFORMATIVO. Nivel `aviso` y no `error`, y el mensaje no dice qué va a pasar con
+ * la carga: eso se decide en otro lado y afirmarlo acá sería adelantarse.
+ *
+ * `existeEnErp === null` NO cuenta: es "sin verificar", y avisar sobre algo que no
+ * se verificó entrena al operador a ignorar el aviso.
+ */
+export function advertenciasExistenciaErp(r: Remito): Advertencia[] {
+  const inexistentes = (r.articulos ?? []).filter((it) => it.existeEnErp === false);
+  if (inexistentes.length === 0) return [];
+
+  return inexistentes.map((it) => ({
+    id: `${r.id}:${it.id}:existe-erp`,
+    nivel: 'aviso' as const,
+    mensaje:
+      `${refArticulo(it)}: el código no figura en el catálogo del sistema. ` +
+      'Verificarlo con el proveedor o darlo de alta si corresponde.',
+    remitoId: r.id,
+    articuloId: it.id,
+    campo: 'codigo' as const,
+  }));
+}
+
+/** Cuántos artículos del remito tienen un código que no figura en el sistema. */
+export function contarSinErp(r: Remito): number {
+  return (r.articulos ?? []).filter((it) => it.existeEnErp === false).length;
+}
+
+export function advertenciasOrdenCompra(r: Remito): Advertencia[] {
+  return (r.articulos ?? [])
+    .filter((it) => it.stockMatch === false || it.precioMatch === false)
+    .map((it) => ({
+      id: `${r.id}:${it.id}:orden-compra`,
+      nivel: 'aviso' as const,
+      // Se nombra la línea imputada cuando existe: un aviso que dice "no coincide"
+      // sin decir contra qué obliga a abrir la OC a mano para entenderlo. Y la
+      // ausencia de línea es un caso distinto — el artículo no está en ninguna
+      // orden — que antes quedaba mezclado con "coincide mal".
+      mensaje:
+        it.OCNumero == null
+          ? `${refArticulo(it)}: no figura en ninguna orden de compra pendiente del proveedor.`
+          : `${refArticulo(it)}: la cantidad o el precio no coinciden con la OC ${it.OCNumero}` +
+            `${it.OCLinea != null ? ` línea ${it.OCLinea}` : ''}.`,
+      remitoId: r.id,
+      articuloId: it.id,
+      campo: 'orden-compra' as const,
+    }));
 }
 
 /** Valida un lote (Nuevo puede traer varios remitos de un mismo PDF). */

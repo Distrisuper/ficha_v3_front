@@ -57,13 +57,66 @@ export interface Articulo {
    * nunca y un artículo sin verificar se ve igual que uno que no coincidió. El
    * front ya distingue los tres casos, así que la migración es sólo de DB.
    */
-  stockMatch: boolean | null; // la cantidad coincide con la orden de compra
+  /**
+   * La cantidad recibida coincide con el SALDO PENDIENTE de la línea de OC.
+   *
+   * Antes se comparaba contra la cantidad pedida original, así que una recepción
+   * parcial nunca daba match: si la OC pedía 10 y ya se habían recibido 9, un
+   * remito por la última unidad se marcaba en rojo. Ahora se compara contra lo
+   * que falta recibir, que es la pregunta real.
+   */
+  stockMatch: boolean | null;
   precioMatch: boolean | null; // el precio unitario coincide con la orden de compra
+  /**
+   * Línea de OC contra la que se imputó este artículo. `null` = no se encontró
+   * ninguna libre para su código.
+   *
+   * El modelo es 1 artículo → 1 línea de OC, garantizado por el índice único
+   * `articulos.OC_unique` del back: una línea de OC la toma un artículo y nada
+   * más que uno.
+   *
+   * Numéricos: como texto, un `"01907"` no matcheaba el `1907` que devuelve el
+   * ERP y la imputación se perdía en silencio.
+   */
+  OCNumero: number | null;
+  OCLinea: number | null;
+  /**
+   * ¿Existe en el catálogo del ERP, con equivalencia para este proveedor?
+   *
+   * Es una pregunta DISTINTA de `stockMatch`/`precioMatch`, que comparan cantidad
+   * y precio contra la orden de compra. Esto dice si el artículo existe, y es
+   * independiente de cualquier orden: puede existir y no estar en ninguna OC, o
+   * estar en una OC y no tener equivalencia registrada para ese proveedor.
+   *
+   * Hoy es informativo — se muestra al operador y no condiciona la carga.
+   *
+   * `null` = todavía no se verificó (remitos anteriores a la migración, o la
+   * consulta al ERP falló). No es lo mismo que `false`.
+   */
+  existeEnErp: boolean | null;
+  /** Código interno del ERP, cuando existe. Es el que reconoce el operador. */
+  codigoErp: string | null;
   precio_unitario: number;
   total_unitario: number;
   remitoId: UUID;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * Una percepción del comprobante, tal como la extrajo la IA.
+ *
+ * `nombre` es la categoría canónica (`PERC. IIBB BSAS`, `PERC. IVA`, ...) y es lo
+ * que el integrador traduce al código de percepción del ERP. `descripcion` es el
+ * texto crudo del PDF, y es lo que el operador reconoce cuando compara con el
+ * papel que tiene al lado — por eso el tooltip muestra los dos.
+ */
+export interface PercepcionDetalle {
+  id: UUID;
+  nombre: string;
+  descripcion: string;
+  monto: number;
+  orden: number;
 }
 
 export interface Remito {
@@ -79,7 +132,17 @@ export interface Remito {
   facturaCargada: boolean;
   estado: RemitoEstado;
   subtotal: number;
+  /** TOTAL de percepciones. Es lo que se muestra; el desglose va en el tooltip. */
   percepciones: number;
+  /**
+   * Desglose por percepción.
+   *
+   * Opcional porque no todos los endpoints lo traen: sólo los que hacen el join
+   * (`/remitos/own`, `/remitos/by-job/:id`, `/remitos` y el detalle). Ausente o
+   * vacío = no hay desglose y el tooltip no se muestra; NO significa que no haya
+   * percepciones, porque el total puede venir de un comprobante viejo.
+   */
+  percepcionesDetalle?: PercepcionDetalle[];
   descuentos: number;
   iva: number;
   total: number;

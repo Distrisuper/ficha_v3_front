@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import type { Advertencia } from '../utils/validacionFactura';
 
 interface Props {
@@ -7,6 +7,8 @@ interface Props {
   titulo?: string;
   /** Variante compacta, sin fondo ni borde, para meter adentro del modal. */
   compacto?: boolean;
+  /** Texto al pie de la lista, para la consecuencia de cargar igual. */
+  nota?: ReactNode;
   style?: CSSProperties;
 }
 
@@ -18,7 +20,7 @@ interface Props {
  * avisos de `procesosFallidos` en Pendientes) y mezclarlos haría que el operador
  * tratara un dato mal tipeado como un error de la aplicación.
  */
-export function PanelAdvertencias({ advertencias, titulo, compacto, style }: Props) {
+export function PanelAdvertencias({ advertencias, titulo, compacto, nota, style }: Props) {
   if (advertencias.length === 0) return null;
 
   const errores = advertencias.filter((a) => a.nivel === 'error').length;
@@ -74,6 +76,7 @@ export function PanelAdvertencias({ advertencias, titulo, compacto, style }: Pro
             </li>
           ))}
         </ul>
+        {nota && <div style={{ marginTop: 8, opacity: 0.9 }}>{nota}</div>}
       </div>
     </div>
   );
