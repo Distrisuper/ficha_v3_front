@@ -9,32 +9,56 @@ interface Props {
   compacto?: boolean;
   /** Texto al pie de la lista, para la consecuencia de cargar igual. */
   nota?: ReactNode;
+  /**
+   * Variante ROJA, para lo que no se va a cargar.
+   *
+   * Se agregó con la carga parcial de remitos: un artículo cuyo código no existe
+   * en el catálogo del sistema NO entra, y el operador lo tiene que cargar a mano
+   * por afuera. Eso es una consecuencia distinta de "revisá este número": no se
+   * arregla corrigiendo el comprobante, y si pasa desapercibida queda mercadería
+   * sin cargar en el sistema.
+   *
+   * Ojo con el criterio general de la app (ver docblock de abajo): el rojo acá NO
+   * significa "el proceso falló" ni "no podés continuar" — la carga se puede
+   * aceptar igual. Significa "esto queda afuera y alguien tiene que hacerse
+   * cargo", que es la única otra cosa que amerita romper el ámbar.
+   */
+  tono?: 'aviso' | 'excluido';
   style?: CSSProperties;
 }
 
 /**
- * Cuadro amarillo de advertencias previas a la carga.
+ * Cuadro de advertencias previas a la carga. Ámbar por defecto.
  *
  * Amarillo y no rojo a propósito: no es un fallo del sistema, es un comprobante que
  * necesita corrección. El rojo de esta app ya significa "el proceso falló" (ver los
  * avisos de `procesosFallidos` en Pendientes) y mezclarlos haría que el operador
  * tratara un dato mal tipeado como un error de la aplicación.
+ *
+ * La excepción es `tono="excluido"`: artículos que NO se van a cargar. Ahí el rojo
+ * está justificado porque la consecuencia es material —queda mercadería afuera— y
+ * no se arregla corrigiendo un campo.
  */
-export function PanelAdvertencias({ advertencias, titulo, compacto, nota, style }: Props) {
+export function PanelAdvertencias({ advertencias, titulo, compacto, nota, tono = 'aviso', style }: Props) {
   if (advertencias.length === 0) return null;
 
   const errores = advertencias.filter((a) => a.nivel === 'error').length;
+  const excluido = tono === 'excluido';
+
+  const paleta = excluido
+    ? { fondo: 'var(--err-weak)', borde: '#f0c6c6', color: 'var(--err)' }
+    : { fondo: '#fdf8ec', borde: '#f3dca6', color: 'var(--warn)' };
 
   return (
     <div
       role="alert"
       style={{
-        background: compacto ? 'transparent' : '#fdf8ec',
-        border: compacto ? 'none' : '1px solid #f3dca6',
+        background: compacto ? 'transparent' : paleta.fondo,
+        border: compacto ? 'none' : `1px solid ${paleta.borde}`,
         borderRadius: 8,
         padding: compacto ? 0 : '11px 14px',
         fontSize: 13,
-        color: 'var(--warn)',
+        color: paleta.color,
         display: 'flex',
         gap: 10,
         alignItems: 'flex-start',
@@ -61,7 +85,9 @@ export function PanelAdvertencias({ advertencias, titulo, compacto, nota, style 
         {titulo && (
           <div style={{ fontWeight: 700, marginBottom: 6 }}>
             {titulo}
-            {errores > 0 && !compacto && (
+            {/* En el panel rojo el contador sobra: el título ya dice cuántos son
+                y "a corregir" sería engañoso — no se corrigen acá, se cargan a mano. */}
+            {errores > 0 && !compacto && !excluido && (
               <span style={{ fontWeight: 600, opacity: 0.85 }}>
                 {' '}
                 · {errores} {errores === 1 ? 'problema' : 'problemas'} a corregir

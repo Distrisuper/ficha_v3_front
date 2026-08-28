@@ -13,17 +13,11 @@ import {
   estiloTooltipDesglose,
   TOOLTIP_DESGLOSE_BG,
 } from '../components/DesglosePercepciones';
-import {
-  BadgeOrdenCompra,
-  BadgeSinErp,
-  IconosMatch,
-  MarcaSinErp,
-  Spinner,
-} from '../components/OrdenCompra';
+import { BadgeOrdenCompra, BadgeSinErp, IconosMatch, Spinner } from '../components/OrdenCompra';
 import { formatNroComprobante } from '../utils/comprobante';
 import {
   advertenciasExistenciaErp,
-  advertenciasOrdenCompra,
+  codigosVerificados,
   contarSinErp,
   claveCampo,
   indexarPorCampo,
@@ -93,17 +87,27 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
   // excluye.
   //
   // Se omiten los remitos con la consulta de OC en vuelo: mientras está procesando
-  // ninguno de los dos flags es confiable (mismo criterio que `IconosMatch`), y avisar
+  // el veredicto de existencia todavia no es confiable, y avisar
   // sobre un veredicto que puede cambiar en el próximo evento del stream es peor que
   // no avisar.
   const advOrdenCompraPorRemito = useMemo(() => {
     const out: Record<string, Advertencia[]> = {};
     for (const r of pendientes) {
       if (r.jobId && ordenCompraPorJob[r.jobId] === 'procesando') continue;
-      // Dos avisos distintos que se resuelven en la misma etapa:
-      //   · no coincide con la OC  -> entra igual, al precio del remito
-      //   · no existe en el sistema -> NO entra con su código, va a reclasificar
-      const avisos = [...advertenciasOrdenCompra(r), ...advertenciasExistenciaErp(r)];
+      /**
+       * SÓLO existencia en el sistema. El aviso de "no coincide con la OC" se sacó.
+       *
+       * La etapa de OC sigue corriendo y sigue guardando `stockMatch`/`precioMatch`
+       * y la (OC, línea) imputada — el integrador los usa para fichar al precio de
+       * la orden. Lo que se sacó es el AVISO al operador: la diferencia de cantidad
+       * o precio contra la orden no es algo que él resuelva antes de cargar, y
+       * mostrarlo por renglón competía con el único aviso que sí requiere una acción
+       * suya: que el código no exista.
+       *
+       * Un aviso que no tiene acción asociada le enseña al operador a ignorar el
+       * amarillo. Después, cuando el amarillo importe, tampoco lo va a mirar.
+       */
+      const avisos = advertenciasExistenciaErp(r);
       if (avisos.length > 0) out[r.id] = avisos;
     }
     return out;
@@ -244,7 +248,30 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
       } else {
         patchRemitoLocal(r.id, { articulos: restantes }); // carga parcial: quedan artículos
       }
-      setNotice(`Remito ${r.remitoNro || r.id.slice(0, 8)}: ${seleccionados.length} artículo(s) enviados a stock.`);
+
+      /**
+       * Lo que quedó para cargar a mano.
+       *
+       * El popup ya lo avisó, pero ese aviso se lee mientras el operador decide si
+       * confirma. Lo que le queda POR HACER después de cerrar el modal es cargar
+       * esos artículos en el sistema, y para eso necesita los códigos a la vista
+       * justo en el momento en que va a hacerlo — no dos clics atrás.
+       *
+       * Mismo criterio que usa el back para `cargaManual` (`existeEnErp === false`),
+       * así que lo que dice el aviso es lo que efectivamente quedó afuera.
+       */
+      const aMano = (r.articulos ?? []).filter(
+        (a) => cargados.has(a.id) && a.existeEnErp === false,
+      );
+      const ref = r.remitoNro || r.id.slice(0, 8);
+      setNotice(
+        aMano.length === 0
+          ? `Remito ${ref}: ${seleccionados.length} artículo(s) enviados a stock.`
+          : `Remito ${ref}: ${seleccionados.length - aMano.length} artículo(s) enviados a stock. ` +
+            `FALTA CARGAR A MANO en el sistema: ${aMano
+              .map((a) => a.codigo || a.nombre || 's/código')
+              .join(', ')}.`,
+      );
       setEditingIds((prev) => {
         const n = new Set(prev);
         n.delete(r.id);
@@ -252,6 +279,31 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
       });
     } catch (e) {
       setNotice(e instanceof Error ? `Error: ${e.message}` : 'No se pudo cargar el stock');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  /**
+   * Reintenta la verificación de códigos.
+   *
+   * `marcarEnProceso` optimista: el spinner arranca al apretar, no cuando llega el
+   * evento del stream. Sin eso, entre el POST y el primer evento no pasa nada
+   * visible y el operador vuelve a apretar.
+   */
+  async function handleReverificar(r: Remito) {
+    try {
+      setBusyId(r.id);
+      setNotice(null);
+      await remitosApi.reverificarCodigos(r.id);
+      if (r.jobId) marcarEnProceso(r.jobId);
+      setNotice('Verificando los códigos contra el catálogo del sistema…');
+    } catch (e) {
+      setNotice(
+        e instanceof Error
+          ? `No se pudo reencolar la verificación: ${e.message}`
+          : 'No se pudo reencolar la verificación de códigos',
+      );
     } finally {
       setBusyId(null);
     }
@@ -394,6 +446,23 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
           const advCard = advertenciasPorRemito[r.id] ?? [];
           const erroresCard = soloErrores(advCard);
           const hayAdvertenciasCard = advCard.length > 0;
+
+          /**
+           * Gate de la carga: sin códigos verificados el remito NO se puede cargar.
+           *
+           * `codigosOk` se deriva de los artículos (`existeEnErp != null`), no del
+           * tracker en memoria: sobrevive a un refresh. `verificandoCodigos` sí sale
+           * del tracker, y sólo cambia el MENSAJE — "esperá" vs "falló, reintentá".
+           * Si el tracker se perdió por un refresh, se muestra el segundo, que es el
+           * que ofrece salida.
+           *
+           * Aplica sólo a la carga del REMITO. La factura se carga antes y es
+           * justamente lo que dispara la verificación: bloquearla sería un
+           * interbloqueo.
+           */
+          const codigosOk = codigosVerificados(r);
+          const verificandoCodigos = ocProcesando;
+          const bloqueadoPorCodigos = !esFacturaACargar && !codigosOk;
           return (
             <div
               key={r.id}
@@ -438,6 +507,43 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                     desaparecer en el próximo evento del stream.
                   */}
                   {!ocProcesando && <BadgeSinErp cantidad={contarSinErp(r)} />}
+                  {/*
+                    Reverificar códigos. Sólo ícono y sólo cuando hace falta: si los
+                    códigos están verificados no hay nada que reintentar, y un botón
+                    que no hace falta en el header compite con los badges.
+
+                    Vive acá y no en la barra de acciones de abajo porque no es una
+                    acción del flujo (cargar / seleccionar) sino la reparación de un
+                    dato que falta. Ponerlo al lado de "Cargar" lo hacía parecer una
+                    alternativa a cargar.
+                  */}
+                  {!esFacturaACargar && !codigosOk && (
+                    <button
+                      onClick={() => handleReverificar(r)}
+                      disabled={busyId === r.id || verificandoCodigos}
+                      title={
+                        verificandoCodigos
+                          ? 'Verificando los códigos…'
+                          : 'Reverificar los códigos contra el catálogo del sistema. No reprocesa el PDF.'
+                      }
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        width: 30,
+                        height: 30,
+                        borderRadius: 8,
+                        border: '1px solid #f3dca6',
+                        background: '#fdf8ec',
+                        color: 'var(--warn)',
+                        cursor: busyId === r.id || verificandoCodigos ? 'default' : 'pointer',
+                        flex: 'none',
+                        padding: 0,
+                      }}
+                    >
+                      {verificandoCodigos ? <Spinner size={13} /> : <IconoRecargar />}
+                    </button>
+                  )}
                 </div>
                 <span style={{ fontSize: 13, color: 'var(--muted-2)', fontWeight: 600 }}>{fmtDate(r.fecha)}</span>
               </div>
@@ -454,7 +560,7 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                     {/* Con los artículos colapsados no se ven los indicadores, así
                         que el resumen va acá para no tener que expandir la card. */}
                     {!showItems && items.length > 0 && (
-                      <ResumenMatch items={items} procesando={ocProcesando} />
+                      <ResumenSinErp items={items} procesando={ocProcesando} />
                     )}
                     {editing && (
                       <input
@@ -490,7 +596,16 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                     const warnNombre = warnFor(r.id, 'nombre', it.id);
                     const warnCodigo = warnFor(r.id, 'codigo', it.id);
                     const warnCantidad = warnFor(r.id, 'cantidad', it.id);
-                    const warnOc = warnFor(r.id, 'orden-compra', it.id);
+                    // El código no existe en el sistema para este proveedor: la carga
+                    // automática lo saltea y lo tiene que cargar el operador a mano.
+                    //
+                    // `noExiste` sale del FLAG y `warnSinErp` de las advertencias, y no
+                    // son lo mismo: `advertenciasExistenciaErp` no emite nada mientras la
+                    // etapa de OC está corriendo, así que durante la consulta la fila no
+                    // se tiñe ni aparece el ícono. Sin esa distinción, el remito parpadea
+                    // en ámbar mientras se verifica.
+                    const noExiste = it.existeEnErp === false;
+                    const warnSinErp = warnFor(r.id, 'codigo', it.id);
                     return (
                       <div
                         key={it.id}
@@ -501,9 +616,12 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                           gap: 12,
                           padding: '10px 0',
                           borderTop: '1px solid #f2f4f8',
-                          // Tinte ámbar de toda la fila para el ítem sin respaldo de OC:
-                          // el aviso es del artículo entero, no de una celda.
-                          background: warnOc.length ? '#fdf9f0' : undefined,
+                          // Tinte ámbar de TODA la fila cuando el código no existe en
+                          // el sistema: el aviso es del artículo entero, no de una
+                          // celda. Es el único tinte de fila que queda — el de "no
+                          // coincide con la OC" se sacó porque no pedía ninguna acción
+                          // del operador y competía con este, que sí.
+                          background: noExiste ? '#fdf9f0' : undefined,
                           opacity: editing && !checked ? 0.45 : 1,
                           transition: 'opacity .12s ease',
                         }}
@@ -564,14 +682,35 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                             cantidad y deja las columnas desalineadas entre filas — el
                             mismo problema que documenta el `minWidth` de más abajo.
                           */}
-                          {warnOc.length > 0 && conAdvertencia(warnOc, <IconoSinOrdenCompra />)}
+                          {/*
+                            Veredicto del código, por artículo. Tres estados:
+                              · existe        → tick verde chico, discreto
+                              · no existe     → ícono ámbar + tooltip + fila ámbar
+                              · sin verificar → nada
+                            El tercero no muestra nada a propósito: un ícono neutro para
+                            "no sé" es indistinguible de un veredicto y hace que el tick
+                            verde deje de significar algo.
+                          */}
+                          {it.existeEnErp === true && <TickCodigoOk />}
+                          {warnSinErp.length > 0 && conAdvertencia(warnSinErp, <IconoCodigoInexistente />)}
                         </div>
                         <span style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 'none' }}>
                           {/*
-                            Amarillo mientras se consulta la orden de compra, después
-                            verde o rojo según el flag. Los dos van juntos porque
-                            mientras la consulta está en vuelo NINGUNO de los dos
-                            flags es confiable.
+                            Semáforos de la ORDEN DE COMPRA: $ (precio) y caja (cantidad).
+                            Amarillo mientras la consulta está en vuelo, después verde o
+                            rojo según el flag; `null` (sin OC del proveedor, o sin
+                            verificar) queda amarillo, que es lo honesto — no es que no
+                            coincida, es que no había con qué comparar.
+
+                            Son un flujo DISTINTO del ícono ámbar de la izquierda:
+                              · acá     → ¿coincide con lo que se pidió? Informativo.
+                              · ícono ← → ¿el código existe? BLOQUEA la carga.
+                            Por eso viven en lados opuestos de la fila y sólo el segundo
+                            tiñe el renglón.
+
+                            `MarcaSinErp` (la cajita roja) NO vuelve: duplicaba el ícono
+                            de la izquierda en otro color, y dos indicadores del mismo
+                            hecho parecen dos problemas.
                           */}
                           <IconosMatch
                             estado={ocProcesando ? 'procesando' : 'resuelto'}
@@ -580,7 +719,6 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                             ocNumero={it.OCNumero}
                             ocLinea={it.OCLinea}
                           />
-                          {!ocProcesando && <MarcaSinErp existeEnErp={it.existeEnErp} />}
                           {/*
                             minWidth fijo + tabular-nums: sin esto el ancho del
                             badge depende del número (165 vs 5) y los iconos de la
@@ -690,16 +828,25 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                       El botón sigue abriendo el modal aunque haya errores: ahí está el
                       detalle y es el modal el que bloquea la confirmación. Un botón gris
                       sin explicación es peor que uno que abre y dice por qué no puede.
+
+                      La EXCEPCIÓN es la verificación de códigos: ahí sí se deshabilita,
+                      porque no hay nada que revisar en el modal — falta un dato del
+                      sistema. El `title` explica cuál y qué hacer; un botón gris sin
+                      motivo es lo que hace que el operador crea que la app se rompió.
                     */}
                     <button
                       onClick={() => setConfirmAction({ type: esFacturaACargar ? 'factura' : 'stock', remito: r })}
-                      disabled={busyId === r.id || (editing && selCount === 0)}
+                      disabled={busyId === r.id || (editing && selCount === 0) || bloqueadoPorCodigos}
                       title={
-                        erroresCard.length > 0
-                          ? `${erroresCard.length} dato(s) a corregir`
-                          : hayAdvertenciasCard
-                            ? 'Hay datos para revisar'
-                            : undefined
+                        bloqueadoPorCodigos
+                          ? verificandoCodigos
+                            ? 'Verificando los códigos contra el catálogo del sistema. En cuanto termine se habilita.'
+                            : 'Los códigos todavía no se verificaron contra el catálogo del sistema. Hasta saber cuáles existen no se puede cargar: si uno no existe, el sistema rechaza el remito completo. Usá "Reverificar códigos".'
+                          : erroresCard.length > 0
+                            ? `${erroresCard.length} dato(s) a corregir`
+                            : hayAdvertenciasCard
+                              ? 'Hay datos para revisar'
+                              : undefined
                       }
                       style={{
                         height: 44,
@@ -707,7 +854,7 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                         borderRadius: 9,
                         border: 'none',
                         background:
-                          busyId === r.id || (editing && selCount === 0)
+                          busyId === r.id || (editing && selCount === 0) || bloqueadoPorCodigos
                             ? '#8a94a6'
                             : hayAdvertenciasCard
                               ? 'var(--warn)'
@@ -715,10 +862,25 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                         color: '#fff',
                         fontWeight: 700,
                         fontSize: 14,
-                        cursor: busyId === r.id || (editing && selCount === 0) ? 'not-allowed' : 'pointer',
+                        cursor:
+                          busyId === r.id || (editing && selCount === 0) || bloqueadoPorCodigos
+                            ? 'not-allowed'
+                            : 'pointer',
                       }}
                     >
-                      {busyId === r.id ? 'Cargando…' : editing ? `Cargar (${selCount})` : r.facturaCargada === true ? 'Cargar Remito' : hayAdvertenciasCard ? 'Revisar factura' : 'Cargar Factura'}
+                      {busyId === r.id
+                        ? 'Cargando…'
+                        : bloqueadoPorCodigos
+                          ? verificandoCodigos
+                            ? 'Verificando códigos…'
+                            : 'Códigos sin verificar'
+                          : editing
+                            ? `Cargar (${selCount})`
+                            : r.facturaCargada === true
+                              ? 'Cargar Remito'
+                              : hayAdvertenciasCard
+                                ? 'Revisar factura'
+                                : 'Cargar Factura'}
                     </button>
                   </div>
                 </div>
@@ -741,11 +903,21 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
         // que se están cargando — la selección puede ser un subconjunto, y avisar sobre
         // un ítem que queda afuera de esta carga es ruido.
         const seleccionados = getSelected(r);
-        const avisosOc = esFactura
+        // `advOrdenCompraPorRemito` mezcla dos cosas con consecuencias distintas, y
+        // acá se separan porque el operador tiene que decidir distinto con cada una:
+        //
+        //  · campo 'codigo'       → el artículo NO EXISTE en el sistema. No se va a
+        //    cargar; hay que cargarlo a mano por afuera. ROJO.
+        //  · campo 'orden-compra' → la cantidad o el precio no coinciden con la OC.
+        //    Se carga igual, es informativo. ÁMBAR.
+        const advDelRemito = esFactura
           ? []
           : (advOrdenCompraPorRemito[r.id] ?? []).filter(
               (a) => !a.articuloId || seleccionados.has(a.articuloId),
             );
+        // Ya no hay que separar nada: `advOrdenCompraPorRemito` sólo trae las de
+        // existencia (campo 'codigo'). Los avisos de OC se sacaron.
+        const noSeVanACargar = advDelRemito;
         const rows: [string, string][] = esFactura
           ? [
               ['Nº Factura', formatNroComprobante(r.facturaNro)],
@@ -789,14 +961,24 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                 </div>
                 <PanelAdvertencias advertencias={errores} titulo="Hay que corregir esto antes de cargar" />
                 <PanelAdvertencias advertencias={avisos} titulo="Tené en cuenta" />
+                {/* ROJO primero: es la única consecuencia que le deja trabajo pendiente
+                    al operador después de cerrar el modal. Si va debajo del ámbar, se
+                    lee último o no se lee. */}
                 <PanelAdvertencias
-                  advertencias={avisosOc}
+                  advertencias={noSeVanACargar}
+                  tono="excluido"
                   titulo={
-                    avisosOc.length === 1
-                      ? 'Un artículo no corresponde a una orden de compra'
-                      : `${avisosOc.length} artículos no corresponden a una orden de compra`
+                    noSeVanACargar.length === 1
+                      ? 'Un artículo NO se va a cargar'
+                      : `${noSeVanACargar.length} artículos NO se van a cargar`
                   }
-                  nota="Se pueden cargar igual, pero ese stock entra sin una orden de compra que lo respalde."
+                  nota={
+                    <>
+                      El código no existe en el sistema para este proveedor, así que la carga
+                      automática los saltea. El resto del remito se carga igual.{' '}
+                      <b>Estos hay que cargarlos a mano en el sistema.</b>
+                    </>
+                  }
                 />
               </div>
             }
@@ -814,43 +996,61 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
  * la orden de compra. Los tres casos son indistinguibles con los flags actuales
  * (ver la nota del tercer estado en types/api.ts).
  */
-function ResumenMatch({ items, procesando }: { items: Articulo[]; procesando: boolean }) {
+/**
+ * Resumen para el encabezado de la lista colapsada.
+ *
+ * Reemplaza al `ResumenMatch`, que contaba diferencias con la orden de compra
+ * ("✓ OC OK" / "3 obs."). Ese resumen se sacó junto con el resto de los avisos de
+ * OC: no había ninguna acción del operador detrás de ese número.
+ *
+ * Ahora resume lo único que sí le pide algo: cuántos artículos NO se van a poder
+ * cargar porque el código no existe en el sistema.
+ */
+function ResumenSinErp({ items, procesando }: { items: Articulo[]; procesando: boolean }) {
   if (procesando) {
     return (
       <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--warn)', fontWeight: 700, letterSpacing: 0 }}>
         <Spinner size={11} />
-        verificando OC
+        verificando códigos
       </span>
     );
   }
 
-  // Sin verificar (null) NO cuenta como observado: contarlo sería reportar un
-  // problema que nadie comprobó. Sólo el `false` explícito es una diferencia real.
-  const sinVerificar = items.every((it) => it.precioMatch == null && it.stockMatch == null);
+  // `null` es "sin verificar" y NO cuenta: reportar un problema que nadie comprobó
+  // es peor que no reportar nada. Sólo el `false` explícito.
+  const sinVerificar = items.every((it) => it.existeEnErp == null);
   if (sinVerificar) {
     return (
       <span
-        title="Orden de compra pendiente de verificar. Se controla al cargar la factura."
-        style={{ color: 'var(--warn)', fontWeight: 700, letterSpacing: 0, cursor: 'help' }}
+        title="Los códigos todavía no se verificaron contra el sistema. Se controla al cargar la factura."
+        style={{ color: 'var(--muted-2)', fontWeight: 700, letterSpacing: 0, cursor: 'help' }}
       >
-        OC Pend.
+        sin verificar
       </span>
     );
   }
 
-  const observados = items.filter((it) => it.precioMatch === false || it.stockMatch === false).length;
-  const ok = observados === 0;
+  const inexistentes = items.filter((it) => it.existeEnErp === false).length;
+  if (inexistentes === 0) {
+    return (
+      <span
+        title="Todos los códigos existen en el sistema para este proveedor"
+        style={{ color: 'var(--ok)', fontWeight: 700, letterSpacing: 0, cursor: 'help' }}
+      >
+        ✓ códigos OK
+      </span>
+    );
+  }
 
   return (
     <span
       title={
-        ok
-          ? 'Todos los artículos coinciden con la orden de compra'
-          : `${observados} de ${items.length} artículo(s) no coinciden con la orden de compra`
+        `${inexistentes} de ${items.length} artículo(s) tienen un código que no existe en el sistema ` +
+        'para este proveedor. No se van a cargar automáticamente: hay que cargarlos a mano.'
       }
-      style={{ color: ok ? 'var(--ok)' : 'var(--err)', fontWeight: 700, letterSpacing: 0, cursor: 'help' }}
+      style={{ color: 'var(--warn)', fontWeight: 700, letterSpacing: 0, cursor: 'help' }}
     >
-      {ok ? '✓ OC OK' : `${observados} obs.`}
+      {inexistentes} sin código
     </span>
   );
 }
@@ -931,7 +1131,54 @@ function HeadCell({ label, value, big, warn }: { label: string; value: string; b
  * Marca del ítem que no tiene respaldo de orden de compra. Va dentro de un
  * `conAdvertencia`, que le pone el tooltip con el motivo.
  */
-function IconoSinOrdenCompra() {
+/**
+ * El código existe en el catálogo del sistema.
+ *
+ * Chico y sin fondo: es el caso NORMAL y no tiene que competir con el ámbar del
+ * que no existe. Confirma sin pedir atención — si el verde pesara lo mismo que el
+ * ámbar, una lista de 40 artículos correctos taparía el único que importa.
+ */
+function TickCodigoOk() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="var(--ok)"
+      strokeWidth={3}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{ flex: 'none' }}
+      aria-label="El código existe en el sistema"
+    >
+      <title>El código existe en el catálogo del sistema para este proveedor</title>
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
+  );
+}
+
+/** Flecha circular de recargar. Sin texto: va en un botón de 30x30 del header. */
+function IconoRecargar() {
+  return (
+    <svg
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2.2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+      <path d="M21 3v6h-6" />
+    </svg>
+  );
+}
+
+function IconoCodigoInexistente() {
   return (
     <span
       style={{

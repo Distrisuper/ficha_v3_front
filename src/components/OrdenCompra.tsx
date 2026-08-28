@@ -82,8 +82,8 @@ export function BadgeSinErp({ cantidad }: { cantidad: number }) {
   return (
     <div
       title={
-        `${cantidad} artículo(s) de este remito no figuran en el catálogo del sistema. ` +
-        'Verificar el código con el proveedor o darlo de alta si corresponde.'
+        `${cantidad} artículo(s) de este remito tienen un código que no existe en el sistema ` +
+        'para este proveedor. NO se van a cargar automáticamente: hay que cargarlos a mano.'
       }
       style={{
         display: 'flex',
@@ -92,9 +92,16 @@ export function BadgeSinErp({ cantidad }: { cantidad: number }) {
         height: 30,
         padding: '0 12px',
         borderRadius: 99,
-        border: '1px solid #f0c6c6',
-        background: 'var(--err-weak)',
-        color: 'var(--err)',
+        // ÁMBAR y no rojo, igual que la fila y el ícono por artículo.
+        //
+        // Era rojo cuando esto era el único indicador del problema. Ahora la lista
+        // marca lo mismo en tres lugares (badge, resumen, fila) y tenerlos en
+        // colores distintos hacía parecer que eran problemas distintos. El rojo
+        // quedó reservado para el popup de confirmación, que es donde se enuncia la
+        // consecuencia: "esto NO se va a cargar".
+        border: '1px solid #f3dca6',
+        background: '#fdf8ec',
+        color: 'var(--warn)',
         fontSize: 12.5,
         fontWeight: 700,
         whiteSpace: 'nowrap',
@@ -103,8 +110,8 @@ export function BadgeSinErp({ cantidad }: { cantidad: number }) {
     >
       <IconoAlerta />
       {cantidad === 1
-        ? '1 artículo no figura en el sistema'
-        : `${cantidad} artículos no figuran en el sistema`}
+        ? '1 artículo sin código en el sistema'
+        : `${cantidad} artículos sin código en el sistema`}
     </div>
   );
 }

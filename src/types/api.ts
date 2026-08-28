@@ -46,6 +46,18 @@ export interface Articulo {
   cantidad: number | string; // el backend persiste esta columna como char(36): puede llegar como string
   stockCargado: boolean; // true = ítem ya cargado a stock (define "items procesados" en el historial)
   /**
+   * El código no existe en el catálogo del sistema para este proveedor, así que el
+   * integrador NO lo puede cargar y lo tiene que cargar el operador a mano.
+   *
+   * Junto con `stockCargado` son tres estados:
+   *   stockCargado          → lo cargó el integrador
+   *   cargaManual           → lo carga la persona, por afuera
+   *   ninguno de los dos    → todavía pendiente
+   *
+   * Se escribe al aprobar la carga, derivado de `existeEnErp === false`.
+   */
+  cargaManual: boolean;
+  /**
    * Resultado del cruce contra la orden de compra del proveedor (OrderProcessor).
    *
    * Tres estados, y el tercero importa:
@@ -131,6 +143,19 @@ export interface Remito {
   fecha: string | null;
   facturaCargada: boolean;
   estado: RemitoEstado;
+  /**
+   * Líneas de orden de compra que tenía el proveedor cuando se verificó el remito.
+   *
+   *   `null`      → todavía no se verificó
+   *   `0`         → el proveedor NO tiene ninguna OC pendiente
+   *   `> 0`       → hay OC contra las que comparar
+   *   `undefined` → remito anterior a este campo
+   *
+   * Con `0` NO se muestran advertencias de OC: comprar sin orden de compra es
+   * normal, y avisarlo en cada renglón hace que el operador deje de mirar el
+   * amarillo. Ver `advertenciasOrdenCompra`.
+   */
+  ocLineasProveedor?: number | null;
   subtotal: number;
   /** TOTAL de percepciones. Es lo que se muestra; el desglose va en el tooltip. */
   percepciones: number;
