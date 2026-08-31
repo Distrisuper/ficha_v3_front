@@ -294,7 +294,7 @@ export function contarSinErp(r: Remito): number {
 }
 
 /**
- * ¿Ya se verificaron los códigos de este remito contra el catálogo del sistema?
+ * ¿Se verificaron los códigos de este remito contra el catálogo del sistema?
  *
  * Es lo que decide si se puede cargar el remito. El back lo valida igual con un
  * 409 (`submitMercaderia`), así que esto no es la barrera — es lo que hace que el
@@ -306,8 +306,19 @@ export function contarSinErp(r: Remito): number {
  * NO sobrevive: después de recargar, un remito verificado hace horas se vería como
  * "sin verificar" y el botón quedaría bloqueado sin razón.
  *
- * Alcanza con que UN artículo esté verificado: la verificación es por lote, no por
- * artículo. Si uno tiene veredicto, la etapa corrió sobre todos.
+ * ── `every` y no `some` ─────────────────────────────────────────────────────
+ * Era `some`: alcanzaba con que UN artículo tuviera veredicto, con el argumento de
+ * que la verificación es por lote y si uno corrió, corrieron todos.
+ *
+ * El argumento era cierto y la conclusión falsa: la escritura SÍ se puede cortar a
+ * mitad. Pasó — un remito quedó con 6 de 22 artículos verificados, y con `some` el
+ * botón se habilitaba igual. Se habría cargado un remito del que se conocía el
+ * veredicto de menos de un tercio de los renglones, que es justo lo que este gate
+ * existe para evitar.
+ *
+ * La causa del corte está arreglada, pero el gate no tiene por qué confiar en eso:
+ * exigir el veredicto de todos es la misma línea de código y no depende de que
+ * ningún otro mecanismo funcione.
  *
  * Un remito sin artículos se considera verificado: no hay nada que verificar y
  * bloquearlo sería trabarlo para siempre.
@@ -315,7 +326,7 @@ export function contarSinErp(r: Remito): number {
 export function codigosVerificados(r: Remito): boolean {
   const items = r.articulos ?? [];
   if (items.length === 0) return true;
-  return items.some((it) => it.existeEnErp != null);
+  return items.every((it) => it.existeEnErp != null);
 }
 
 /**

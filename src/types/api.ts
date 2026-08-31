@@ -87,11 +87,36 @@ export interface Articulo {
    * `articulos.OC_unique` del back: una línea de OC la toma un artículo y nada
    * más que uno.
    *
-   * Numéricos: como texto, un `"01907"` no matcheaba el `1907` que devuelve el
-   * ERP y la imputación se perdía en silencio.
+   * ── STRING, no number ───────────────────────────────────────────────────────
+   * Estaba tipado `number | null` y era falso: la columna es `varchar` y el
+   * processor le asigna `item.numerocomprobante`, que el schema declara
+   * `z.string()`. El comentario que justificaba el `number` ("como texto, un
+   * '01907' no matcheaba el 1907") describía un problema del CRUCE, que se
+   * resuelve del lado del back al normalizar el código — no un cambio de tipo en
+   * el transporte.
+   *
+   * Sólo se renderizaba, así que nunca explotó. Habría explotado en el primer
+   * `OCNumero - 1` o `.toFixed()`, con un tipo que decía que era seguro.
    */
-  OCNumero: number | null;
-  OCLinea: number | null;
+  OCNumero: string | null;
+  OCLinea: string | null;
+  /**
+   * Valores de la línea de OC AL MOMENTO DE COMPARAR: saldo pendiente y precio
+   * unitario.
+   *
+   * Es la evidencia del veredicto. Un `stockMatch: false` sin esto es una
+   * afirmación sin respaldo: el operador ve el rojo y no sabe si el remito trae
+   * 2 de más o 200. Con esto el tooltip dice "OC: 10 un. — remito: 12 un.".
+   *
+   * NO se re-consultan a la orden: la orden se sigue moviendo (otras recepciones
+   * bajan el saldo, compras renegocia el precio), así que el valor de hoy no
+   * explica el flag de ayer.
+   *
+   * `null` = no se comparó contra ninguna línea. Distinto de `0`, que es un saldo
+   * pendiente legítimo de una línea ya cubierta.
+   */
+  ocCantidad: number | null;
+  ocPrecioUnitario: number | null;
   /**
    * ¿Existe en el catálogo del ERP, con equivalencia para este proveedor?
    *
@@ -156,6 +181,33 @@ export interface Remito {
    * amarillo. Ver `advertenciasOrdenCompra`.
    */
   ocLineasProveedor?: number | null;
+  /**
+   * Órdenes de compra contra las que se contrastó este remito. Para auditoría.
+   *
+   * `null`/`undefined` → nunca se verificó
+   * `[]`               → se verificó y el proveedor no tenía ninguna orden con
+   *                      líneas comparables (mismo hecho que `ocLineasProveedor: 0`)
+   *
+   * No es lo mismo que juntar los `OCNumero` de los artículos: ahí sólo están las
+   * órdenes que terminaron imputadas, y lo que hay que poder explicar es por qué
+   * un artículo NO se imputó — "se miraron 1907 y 1912 y su código no estaba".
+   */
+  ocNumeros?: string[] | null;
+  /** Cuándo se contrastó. La orden cambia con el tiempo: la fecha es parte del dato. */
+  ocVerificadaEn?: string | null;
+  /**
+   * Estado de la etapa 2 (orden de compra) del job de este remito.
+   *
+   * `'corriendo' | 'ok' | 'error' | null`. Viene del job, PERSISTIDO.
+   *
+   * Es lo que hace que el cartel "Orden de compra no disponible" aparezca sin
+   * recargar la página: antes ese dato sólo vivía en el tracker en memoria del
+   * stream SSE, que no sobrevive a un refresh y encima lo apagaba el `completado`
+   * de la etapa 3 (compartían `stage`).
+   */
+  estadoOc?: 'corriendo' | 'ok' | 'error' | null;
+  /** Estado de la etapa 3 (verificación de códigos). Mismos valores. */
+  estadoCodigos?: 'corriendo' | 'ok' | 'error' | null;
   subtotal: number;
   /** TOTAL de percepciones. Es lo que se muestra; el desglose va en el tooltip. */
   percepciones: number;

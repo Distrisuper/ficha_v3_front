@@ -13,12 +13,13 @@ import {
   estiloTooltipDesglose,
   TOOLTIP_DESGLOSE_BG,
 } from '../components/DesglosePercepciones';
-import { BadgeOrdenCompra, BadgeSinErp, IconosMatch, Spinner } from '../components/OrdenCompra';
+// `Spinner` ya no se importa: el único indicador animado de la card es
+// `BadgeOrdenCompra`. `BadgeSinErp` tampoco (su uso quedó comentado más abajo).
+import { BadgeOcContrastada, BadgeOrdenCompra, IconosMatch } from '../components/OrdenCompra';
 import { formatNroComprobante } from '../utils/comprobante';
 import {
   advertenciasExistenciaErp,
   codigosVerificados,
-  contarSinErp,
   claveCampo,
   indexarPorCampo,
   soloAvisos,
@@ -438,9 +439,36 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
           const percepciones = Number(r.percepciones || 0);
           const descuentos = Number(r.descuentos || 0);
           const totalFactura = Number(r.total) > 0 ? Number(r.total) : subtotal - descuentos + percepciones + iva;
-          // El flujo de orden de compra publica su progreso con processId = jobId.
-          const estadoOc = r.jobId ? ordenCompraPorJob[r.jobId] : undefined;
-          const ocProcesando = estadoOc === 'procesando';
+          /**
+           * Estado de la validación, UNIFICADO. Un solo concepto para toda la card.
+           *
+           * Antes había tres indicadores animados a la vez —el spinner del botón de
+           * reverificar, el badge "Procesando orden de compra" y el "verificando
+           * códigos" del resumen— diciendo la misma cosa. Tres spinners para un
+           * proceso no informan tres veces: informan una vez y molestan dos.
+           *
+           * ── De dónde sale ────────────────────────────────────────────────────
+           * `r.estadoOc` / `r.estadoCodigos` vienen del JOB y están PERSISTIDOS, así
+           * que sobreviven a un refresh y a que un evento del stream se pierda. El
+           * tracker en memoria (`ordenCompraPorJob`) se sigue usando sólo para el
+           * arranque optimista: da feedback en el mismo frame del click, antes de
+           * que el servidor conteste.
+           *
+           * Ése es el arreglo del "el cartel de orden de compra no disponible sólo
+           * aparece si recargo": el dato ahora viaja en el remito, y el refresco
+           * puntual de la card (que ya dispara `orden_compra.validada`) lo trae.
+           */
+          const trackerEnMemoria = r.jobId ? ordenCompraPorJob[r.jobId] : undefined;
+          const validando =
+            trackerEnMemoria === 'procesando' ||
+            r.estadoOc === 'corriendo' ||
+            r.estadoCodigos === 'corriendo';
+          // La OC no está disponible cuando su etapa falló. `estadoOc` persistido
+          // primero; el tracker cubre la ventana antes del primer refresco.
+          const ocFallida = r.estadoOc === 'error' || trackerEnMemoria === 'fallida';
+          // `ocProcesando` alimenta los semáforos: mientras se valida, ningún flag
+          // es confiable todavía.
+          const ocProcesando = validando;
           // Errores (bloquean) y avisos (no bloquean) del comprobante. Cada uno ya está
           // marcado en amarillo sobre su campo; acá sólo se usa para el color/estado del botón.
           const advCard = advertenciasPorRemito[r.id] ?? [];
@@ -451,7 +479,7 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
            * Gate de la carga: sin códigos verificados el remito NO se puede cargar.
            *
            * `codigosOk` se deriva de los artículos (`existeEnErp != null`), no del
-           * tracker en memoria: sobrevive a un refresh. `verificandoCodigos` sí sale
+           * tracker en memoria: sobrevive a un refresh. `validando` sí sale
            * del tracker, y sólo cambia el MENSAJE — "esperá" vs "falló, reintentá".
            * Si el tracker se perdió por un refresh, se muestra el segundo, que es el
            * que ofrece salida.
@@ -461,8 +489,15 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
            * interbloqueo.
            */
           const codigosOk = codigosVerificados(r);
-          const verificandoCodigos = ocProcesando;
-          const bloqueadoPorCodigos = !esFacturaACargar && !codigosOk;
+          /**
+           * Bloquea si los códigos no están verificados O si se está validando.
+           *
+           * El segundo caso faltaba: con un veredicto de una corrida anterior,
+           * `codigosOk` daba true y el botón se habilitaba MIENTRAS una nueva
+           * validación estaba en curso. Se habría cargado el remito con el
+           * veredicto viejo, justo el que se estaba recalculando.
+           */
+          const bloqueadoPorCodigos = !esFacturaACargar && (!codigosOk || validando);
           return (
             <div
               key={r.id}
@@ -500,13 +535,35 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                   <HeadCell label="PROVEEDOR" value={provName(r)} />
                   {mostrarSucursal && <HeadCell label="SUCURSAL" value={sucName(r)} />}
                   <HeadCell label="ESTADO" value={r.facturaCargada === true ? 'Factura cargada' : 'Remito Cargado'} />
-                  {estadoOc && <BadgeOrdenCompra estado={estadoOc} />}
+                  {/*
+                    UN solo badge animado por card. Cubre "validando" y "la OC
+                    falló"; el resto de los indicadores (resumen, botón) ya no
+                    animan nada.
+                  */}
+                  {validando ? (
+                    <BadgeOrdenCompra estado="procesando" />
+                  ) : ocFallida ? (
+                    <BadgeOrdenCompra estado="fallida" />
+                  ) : (
+                    /*
+                      Trazabilidad: contra qué OC se contrastó este remito.
+                      
+                      Sólo cuando la verificación terminó — mientras corre, el
+                      dato es de la corrida ANTERIOR y mostrarlo al lado de un
+                      "procesando" haría creer que es de esta. Y no compite con el
+                      badge de estado porque son excluyentes por construcción.
+                    */
+                    <BadgeOcContrastada
+                      ocNumeros={r.ocNumeros}
+                      ocVerificadaEn={r.ocVerificadaEn}
+                    />
+                  )}
                   {/*
                     Sólo cuando la consulta al ERP terminó: mientras está en vuelo
                     `existeEnErp` todavía no es confiable y el aviso podría
                     desaparecer en el próximo evento del stream.
                   */}
-                  {!ocProcesando && <BadgeSinErp cantidad={contarSinErp(r)} />}
+                  {/* {!ocProcesando && <BadgeSinErp cantidad={contarSinErp(r)} />} — reimportar ambos al reactivar */}
                   {/*
                     Reverificar códigos. Sólo ícono y sólo cuando hace falta: si los
                     códigos están verificados no hay nada que reintentar, y un botón
@@ -517,15 +574,32 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                     dato que falta. Ponerlo al lado de "Cargar" lo hacía parecer una
                     alternativa a cargar.
                   */}
+                  {/*
+                    Ya NO muestra un spinner propio: el badge del encabezado es el
+                    único indicador animado de la card.
+                    
+                    Y sigue visible y HABILITADO mientras valida, a propósito. La
+                    tentación era esconderlo (no tiene sentido reintentar durante un
+                    intento), pero `estadoCodigos = 'corriendo'` está PERSISTIDO y no
+                    tiene timeout: si el worker se muere a mitad de camino, ese
+                    'corriendo' queda para siempre. Escondiendo el botón, la card
+                    quedaba sin ninguna salida — bloqueada, girando, y sin nada que
+                    apretar.
+                    
+                    Reintentar durante una verificación en curso es inofensivo:
+                    `reencolarCodigos` usa un id único por disparo y la verificación
+                    es determinista, así que dos corridas escriben lo mismo. El costo
+                    es una consulta de más al integrador.
+                  */}
                   {!esFacturaACargar && !codigosOk && (
                     <button
                       onClick={() => handleReverificar(r)}
-                      disabled={busyId === r.id || verificandoCodigos}
+                      disabled={busyId === r.id}
                       title={
-                        verificandoCodigos
-                          ? 'Verificando los códigos…'
+                        validando
+                          ? 'Verificando los códigos… Podés reintentar si quedó trabado; no reprocesa el PDF.'
                           : 'Reverificar los códigos contra el catálogo del sistema. No reprocesa el PDF.'
-                      }
+                      } 
                       style={{
                         display: 'flex',
                         alignItems: 'center',
@@ -536,12 +610,12 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                         border: '1px solid #f3dca6',
                         background: '#fdf8ec',
                         color: 'var(--warn)',
-                        cursor: busyId === r.id || verificandoCodigos ? 'default' : 'pointer',
+                        cursor: busyId === r.id ? 'default' : 'pointer',
                         flex: 'none',
                         padding: 0,
                       }}
                     >
-                      {verificandoCodigos ? <Spinner size={13} /> : <IconoRecargar />}
+                      <IconoRecargar />
                     </button>
                   )}
                 </div>
@@ -718,6 +792,22 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                             stockMatch={it.stockMatch}
                             ocNumero={it.OCNumero}
                             ocLinea={it.OCLinea}
+                            // Los valores que la OC tenía AL COMPARAR, para que el
+                            // tooltip diga en cuánto no coincide y no sólo que no
+                            // coincide.
+                            ocCantidad={it.ocCantidad}
+                            ocPrecioUnitario={it.ocPrecioUnitario}
+                            // Sin esto, "el proveedor no tiene OC" y "todavía no se
+                            // verificó" llegan iguales (`null`) y se pintan amarillos.
+                            ocLineasProveedor={r.ocLineasProveedor}
+                            // Para el caso "no se imputó a ninguna línea": lo útil
+                            // ahí no es el valor de la OC (no hay) sino cuáles se
+                            // revisaron.
+                            ocNumeros={r.ocNumeros}
+                            ocVerificadaEn={r.ocVerificadaEn}
+                            // El lado del remito del par de valores.
+                            cantidad={it.cantidad}
+                            precioUnitario={it.precio_unitario}
                           />
                           {/*
                             minWidth fijo + tabular-nums: sin esto el ancho del
@@ -839,7 +929,7 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                       disabled={busyId === r.id || (editing && selCount === 0) || bloqueadoPorCodigos}
                       title={
                         bloqueadoPorCodigos
-                          ? verificandoCodigos
+                          ? validando
                             ? 'Verificando los códigos contra el catálogo del sistema. En cuanto termine se habilita.'
                             : 'Los códigos todavía no se verificaron contra el catálogo del sistema. Hasta saber cuáles existen no se puede cargar: si uno no existe, el sistema rechaza el remito completo. Usá "Reverificar códigos".'
                           : erroresCard.length > 0
@@ -871,7 +961,7 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                       {busyId === r.id
                         ? 'Cargando…'
                         : bloqueadoPorCodigos
-                          ? verificandoCodigos
+                          ? validando
                             ? 'Verificando códigos…'
                             : 'Códigos sin verificar'
                           : editing
@@ -964,22 +1054,51 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                 {/* ROJO primero: es la única consecuencia que le deja trabajo pendiente
                     al operador después de cerrar el modal. Si va debajo del ámbar, se
                     lee último o no se lee. */}
-                <PanelAdvertencias
-                  advertencias={noSeVanACargar}
-                  tono="excluido"
-                  titulo={
-                    noSeVanACargar.length === 1
-                      ? 'Un artículo NO se va a cargar'
-                      : `${noSeVanACargar.length} artículos NO se van a cargar`
-                  }
-                  nota={
-                    <>
-                      El código no existe en el sistema para este proveedor, así que la carga
-                      automática los saltea. El resto del remito se carga igual.{' '}
-                      <b>Estos hay que cargarlos a mano en el sistema.</b>
-                    </>
-                  }
-                />
+                {noSeVanACargar.length > 0 && (
+                  <div
+                    role="alert"
+                    style={{
+                      background: 'var(--err-weak)',
+                      border: '1px solid #f0c6c6',
+                      borderRadius: 8,
+                      padding: '11px 14px',
+                      fontSize: 13,
+                      color: 'var(--err)',
+                      display: 'flex',
+                      gap: 10,
+                      alignItems: 'flex-start',
+                    }}
+                  >
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      style={{ flex: 'none', marginTop: 2 }}
+                    >
+                      <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+                      <path d="M12 9v4M12 17h.01" />
+                    </svg>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                        {noSeVanACargar.length === 1
+                          ? '1 artículo no se va a cargar'
+                          : `${noSeVanACargar.length} artículos no se van a cargar`}
+                      </div>
+                      <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 4, lineHeight: 1.4 }}>
+                        {noSeVanACargar.map((a) => {
+                          const articulo = (r.articulos ?? []).find((it) => it.id === a.articuloId);
+                          const codigo = String(articulo?.codigo ?? '').trim() || 'Sin código';
+                          return <li key={a.id}>{codigo}</li>;
+                        })}
+                      </ul>
+                    </div>
+                  </div>
+                )}
               </div>
             }
           />
@@ -1007,19 +1126,24 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
  * cargar porque el código no existe en el sistema.
  */
 function ResumenSinErp({ items, procesando }: { items: Articulo[]; procesando: boolean }) {
+  // SIN spinner: el badge del encabezado es el único indicador animado de la card.
+  // Tres spinners para un proceso no informan tres veces.
   if (procesando) {
     return (
-      <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--warn)', fontWeight: 700, letterSpacing: 0 }}>
-        <Spinner size={11} />
-        verificando códigos
+      <span
+        title="Verificando los códigos contra el catálogo del sistema."
+        style={{ color: 'var(--muted-2)', fontWeight: 700, letterSpacing: 0, cursor: 'help' }}
+      >
+        verificando…
       </span>
     );
   }
 
-  // `null` es "sin verificar" y NO cuenta: reportar un problema que nadie comprobó
-  // es peor que no reportar nada. Sólo el `false` explícito.
-  const sinVerificar = items.every((it) => it.existeEnErp == null);
-  if (sinVerificar) {
+  const sinVeredicto = items.filter((it) => it.existeEnErp == null).length;
+  const inexistentes = items.filter((it) => it.existeEnErp === false).length;
+
+  // NINGUNO verificado: la etapa no corrió todavía.
+  if (sinVeredicto === items.length) {
     return (
       <span
         title="Los códigos todavía no se verificaron contra el sistema. Se controla al cargar la factura."
@@ -1030,7 +1154,34 @@ function ResumenSinErp({ items, procesando }: { items: Articulo[]; procesando: b
     );
   }
 
-  const inexistentes = items.filter((it) => it.existeEnErp === false).length;
+  /**
+   * ALGUNOS verificados y otros no. Esto NO debería pasar.
+   *
+   * La verificación es por lote: o corre sobre todos o sobre ninguno. Un estado
+   * mixto significa que la escritura se cortó a mitad — y pasó: un remito quedó
+   * con 6 de 22 artículos verificados.
+   *
+   * Antes este caso caía en la rama de abajo y mostraba "5 sin código", que suena
+   * a "los otros 17 están bien". No lo estaban: 1 tenía veredicto y 16 no. El
+   * resumen inducía exactamente la conclusión equivocada.
+   *
+   * Se reporta como incompleto y en ámbar: hay que reverificar, no interpretar.
+   */
+  if (sinVeredicto > 0) {
+    return (
+      <span
+        title={
+          `Verificación INCOMPLETA: ${items.length - sinVeredicto} de ${items.length} artículo(s) ` +
+          `tienen veredicto y ${sinVeredicto} quedaron sin verificar. La verificación es por lote, ` +
+          'así que esto significa que se cortó a mitad de camino. Usá "Reverificar códigos".'
+        }
+        style={{ color: 'var(--warn)', fontWeight: 700, letterSpacing: 0, cursor: 'help' }}
+      >
+        {sinVeredicto} sin verificar
+      </span>
+    );
+  }
+
   if (inexistentes === 0) {
     return (
       <span
