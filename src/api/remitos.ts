@@ -197,7 +197,7 @@ export const remitosApi = {
   reverificarCodigos: (id: UUID) =>
     api.post<{ jobId: string; encolado: boolean }>(`/remitos/reverificar-codigos/${id}`, {}),
   // Envía los UUID de los artículos marcados para que el back procese la carga de la factura.
-  submitFactura: (id: UUID) => api.post<void>(`/factura/submit/${id}`),
+  submitFactura: (id: UUID) => api.post<void>(`/facturas/submit/${id}`),
   // Descarta un remito procesado (no aprobado). El back decide marcar/eliminar.
   discard: (id: UUID) => api.patch<void>(`/remitos/${id}/discard`),
   remove: (id: UUID) => api.delete<void>(`/remitos/${id}`),
