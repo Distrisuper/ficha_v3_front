@@ -269,10 +269,19 @@ export function advertenciasExistenciaErp(r: Remito): Advertencia[] {
 
   return inexistentes.map((it) => ({
     id: `${r.id}:${it.id}:existe-erp`,
-    nivel: 'aviso' as const,
+    // `error` y no `aviso`. Cambió porque cambió la consecuencia: antes esto era
+    // informativo y no decidía nada. Ahora el integrador SACA estos artículos del
+    // remito y los carga el operador a mano en el ERP, así que no es un dato de
+    // color — es la diferencia entre que la mercadería entre o no entre.
+    //
+    // OJO: `error` acá NO bloquea la carga. El operador puede cargar igual (así
+    // fue pedido) y de hecho es el camino normal: se cargan los que se pueden y
+    // este queda para mano. El nivel sirve para que el popup lo muestre en ROJO,
+    // separado de los avisos ámbar de la orden de compra.
+    nivel: 'error' as const,
     mensaje:
-      `${refArticulo(it)}: el código no figura en el catálogo del sistema. ` +
-      'Verificarlo con el proveedor o darlo de alta si corresponde.',
+      `${refArticulo(it)}: el código no existe en el catálogo del sistema para este proveedor. ` +
+      'NO se va a cargar: hay que cargarlo a mano en el sistema.',
     remitoId: r.id,
     articuloId: it.id,
     campo: 'codigo' as const,
@@ -284,7 +293,65 @@ export function contarSinErp(r: Remito): number {
   return (r.articulos ?? []).filter((it) => it.existeEnErp === false).length;
 }
 
+/**
+ * ¿Se verificaron los códigos de este remito contra el catálogo del sistema?
+ *
+ * Es lo que decide si se puede cargar el remito. El back lo valida igual con un
+ * 409 (`submitMercaderia`), así que esto no es la barrera — es lo que hace que el
+ * operador entienda POR QUÉ el botón está deshabilitado en vez de que parezca roto.
+ *
+ * ── Por qué se deriva de los artículos y no de un estado del job ─────────────
+ * `existeEnErp` está en el dato que la pantalla ya tiene, así que sobrevive a un
+ * refresh. El estado de la etapa vive en el tracker en memoria del stream SSE, que
+ * NO sobrevive: después de recargar, un remito verificado hace horas se vería como
+ * "sin verificar" y el botón quedaría bloqueado sin razón.
+ *
+ * ── `every` y no `some` ─────────────────────────────────────────────────────
+ * Era `some`: alcanzaba con que UN artículo tuviera veredicto, con el argumento de
+ * que la verificación es por lote y si uno corrió, corrieron todos.
+ *
+ * El argumento era cierto y la conclusión falsa: la escritura SÍ se puede cortar a
+ * mitad. Pasó — un remito quedó con 6 de 22 artículos verificados, y con `some` el
+ * botón se habilitaba igual. Se habría cargado un remito del que se conocía el
+ * veredicto de menos de un tercio de los renglones, que es justo lo que este gate
+ * existe para evitar.
+ *
+ * La causa del corte está arreglada, pero el gate no tiene por qué confiar en eso:
+ * exigir el veredicto de todos es la misma línea de código y no depende de que
+ * ningún otro mecanismo funcione.
+ *
+ * Un remito sin artículos se considera verificado: no hay nada que verificar y
+ * bloquearlo sería trabarlo para siempre.
+ */
+export function codigosVerificados(r: Remito): boolean {
+  const items = r.articulos ?? [];
+  if (items.length === 0) return true;
+  return items.every((it) => it.existeEnErp != null);
+}
+
+/**
+ * @deprecated NO SE USA. Ningún componente la llama.
+ *
+ * Generaba el aviso "no coincide con la orden de compra" (cantidad o precio
+ * distintos de la OC imputada, o el artículo no figura en ninguna). Se sacó de la
+ * UI por decisión de producto: esa diferencia no es algo que el operador resuelva
+ * antes de cargar — el integrador ficha igual, al precio de la orden — y el aviso
+ * por renglón competía con el único que sí pide una acción suya: que el código no
+ * exista en el sistema (`advertenciasExistenciaErp`).
+ *
+ * Un aviso sin acción asociada enseña a ignorar el amarillo, y después el amarillo
+ * que importa tampoco se mira.
+ *
+ * Se conserva la función, no el uso: los datos que consume (`stockMatch`,
+ * `precioMatch`, `OCNumero`, `OCLinea`) SIGUEN calculándose y persistiéndose —
+ * el integrador los necesita para imputar contra la orden. Volver a mostrarlo es
+ * reconectarla en `PendientesPage.advOrdenCompraPorRemito`.
+ *
+ * `ocLineasProveedor === 0` (proveedor sin ninguna OC) devuelve `[]`: sin OC no
+ * hay nada que comparar. Queda por si se revive.
+ */
 export function advertenciasOrdenCompra(r: Remito): Advertencia[] {
+  if (r.ocLineasProveedor === 0) return [];
   return (r.articulos ?? [])
     .filter((it) => it.stockMatch === false || it.precioMatch === false)
     .map((it) => ({

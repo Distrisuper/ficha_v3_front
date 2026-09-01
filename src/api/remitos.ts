@@ -186,8 +186,18 @@ export const remitosApi = {
   // Envía los UUID de los artículos marcados para que el back procese la carga a stock.
   submitMercaderia: (id: UUID, articulos: string[]) =>
     api.post<void>(`/remitos/submit-mercaderia/${id}`, { articulos }),
+  /**
+   * Reintenta la verificación de códigos contra el catálogo del sistema.
+   *
+   * Es la salida cuando esa etapa falla: sin ella el back rechaza la carga con 409
+   * y el remito queda trabado. Reencola sólo esa etapa — NO reprocesa el PDF, que
+   * costaría una llamada al modelo y recrearía los remitos perdiendo las
+   * correcciones del operador.
+   */
+  reverificarCodigos: (id: UUID) =>
+    api.post<{ jobId: string; encolado: boolean }>(`/remitos/reverificar-codigos/${id}`, {}),
   // Envía los UUID de los artículos marcados para que el back procese la carga de la factura.
-  submitFactura: (id: UUID) => api.post<void>(`/factura/submit/${id}`),
+  submitFactura: (id: UUID) => api.post<void>(`/facturas/submit/${id}`),
   // Descarta un remito procesado (no aprobado). El back decide marcar/eliminar.
   discard: (id: UUID) => api.patch<void>(`/remitos/${id}/discard`),
   remove: (id: UUID) => api.delete<void>(`/remitos/${id}`),
