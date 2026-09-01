@@ -654,7 +654,34 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                       </span>
                     )}
                   </span>
-                  {showItems && <span>CANT.</span>}
+                  {/*
+                    Total de UNIDADES, espejando el contador de artículos de la
+                    izquierda. Son dos preguntas distintas y las dos se hacen: 22
+                    renglones y 336 unidades no son lo mismo, y el que descarga la
+                    mercadería cuenta unidades.
+
+                    `fmtCantidad` y no el número crudo: las cantidades pueden ser
+                    decimales (1,5 kg) y el formateo es-AR es el mismo que usa cada
+                    renglón — un total con punto decimal al lado de renglones con
+                    coma parecería otra cosa.
+                  */}
+                  {showItems && (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                      CANT.
+                      <span
+                        style={{
+                          fontWeight: 700,
+                          color: 'var(--blue)',
+                          letterSpacing: 0,
+                          // Alineado con el badge de cantidad de cada renglón, que
+                          // usa el mismo minWidth para que la columna no baile.
+                          fontVariantNumeric: 'tabular-nums',
+                        }}
+                      >
+                        {fmtCantidad(totalUnidades(r))}
+                      </span>
+                    </span>
+                  )}
                 </div>
                 <div style={{ display: 'grid', gridTemplateRows: showItems ? '1fr' : '0fr', transition: 'grid-template-rows .28s ease' }}>
                   <div style={{ overflow: 'hidden', minHeight: 0 }}>

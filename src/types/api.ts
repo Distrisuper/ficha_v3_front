@@ -240,6 +240,8 @@ export interface Proveedor {
   razonSocial: string | null;
   /** 11 dígitos sin guiones. El formato xx-xxxxxxxx-x es sólo presentación (ver utils/cuit.ts). */
   cuit: string | null;
+  /** Plazo de pago en días. `null` = no cargado; el integrador usa 30 avisando. */
+  diasVencimiento: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -251,13 +253,39 @@ export interface CreateProveedorInput {
   /** Se manda en dígitos, sin la máscara. */
   cuit: string;
   codigoERP: string; // opcional, null en los proveedores cargados antes del campo
+  /**
+   * Plazo de pago en DÍAS, para calcular el vencimiento de la factura.
+   *
+   * OPCIONAL y se OMITE si está vacío: el back distingue `null` ("no se cargó",
+   * cae al default de 30 avisando en el log) de `0` ("vence el mismo día").
+   * Mandar 0 por "no sé" metería un vencimiento falso en la contabilidad.
+   */
+  diasVencimiento?: number;
 }
 
 export interface Sucursal {
   id: UUID;
   nombre: string;
+  /**
+   * Código del depósito en el ERP (`CODIGODEPOSITO` de Flexxus: '001', '003', …).
+   *
+   * Es el dato con el que el integrador escribe el comprobante y con el que se
+   * filtran las órdenes de compra pendientes. Antes salía de una tabla
+   * hardcodeada en el conector, así que agregar un depósito era un deploy.
+   *
+   * `null` en las sucursales creadas antes de que el campo fuera obligatorio.
+   * Esas NO pueden participar del flujo de carga: hay que completarlas.
+   */
+  codigoERP: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Body de POST /sucursales. Los dos campos son obligatorios en el alta. */
+export interface CreateSucursalInput {
+  nombre: string;
+  /** Código del depósito en el ERP. Obligatorio: sin él la sucursal no ficha. */
+  codigoERP: string;
 }
 
 export interface CreateFacturaResponse {
