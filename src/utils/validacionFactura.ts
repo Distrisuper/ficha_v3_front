@@ -219,6 +219,36 @@ export function validarRemito(r: Remito, etiqueta?: string): Advertencia[] {
 }
 
 /**
+ * ¿Cuadra la aritmética del comprobante?
+ *
+ *   subtotal − bonificaciones + percepciones + IVA = total
+ *
+ * ── Por qué existe aparte de `validarRemito` ────────────────────────────────
+ * Es la misma cuenta de la regla 5, pero expuesta como un booleano porque el
+ * botón de cargar la factura necesita ESTE hecho y no "hay alguna advertencia".
+ *
+ * La diferencia importa: la regla 6 avisa cuando el IVA, las percepciones o las
+ * bonificaciones están en cero, y las bonificaciones son cero en casi toda
+ * factura. Con `hayAdvertencias` el botón quedaba ámbar SIEMPRE, así que el ámbar
+ * no significaba nada — y cuando el total no cerraba, que es lo único que el
+ * operador tiene que mirar antes de cargar, se veía igual que el resto.
+ *
+ * `true` cuando no se puede evaluar (total en cero, o sin subtotal): ahí el
+ * problema es la falta del dato y lo reporta `validarRemito` como error. Devolver
+ * `false` pintaría el botón de "no cuadra" por un motivo distinto.
+ */
+export function cuadraElComprobante(r: Remito): boolean {
+  const subtotal = round2(toNumero(r.subtotal));
+  const total = round2(toNumero(r.total));
+  if (total <= 0 || subtotal <= 0) return true;
+
+  const esperado = round2(
+    subtotal - round2(toNumero(r.descuentos)) + round2(toNumero(r.percepciones)) + round2(toNumero(r.iva)),
+  );
+  return Math.abs(esperado - total) <= TOLERANCIA_TOTAL;
+}
+
+/**
  * Referencia legible de un artículo para los mensajes: código, descripción, o ambos.
  */
 function refArticulo(it: Articulo): string {

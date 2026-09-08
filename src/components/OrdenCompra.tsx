@@ -158,7 +158,112 @@ function IconoAlerta() {
   );
 }
 
+
+// --- Celda de veredicto para las columnas de match --------------------------
+
+/** Ancho de cada columna de veredicto. Fijo para que alineen entre filas. */
+export const ANCHO_COL_VEREDICTO = 46;
+
+/**
+ * Una celda de las tres columnas de verificación (ART. / $ / STOCK).
+ *
+ * ── Por qué columnas y no iconos sueltos ────────────────────────────────────
+ * Antes eran dos iconos ($ y caja) apretados a la derecha de la fila, más un
+ * tercer indicador —el del código— del otro lado del renglón. Tres veredictos en
+ * dos lugares y con tres formas distintas: para saber si un artículo estaba bien
+ * había que leer la fila entera. Con una columna por pregunta y un ancho fijo, el
+ * ojo baja por la columna y encuentra las cruces sin leer nada.
+ *
+ * ── Los cuatro estados ──────────────────────────────────────────────────────
+ *   cargando  → spinner. La verificación está en vuelo; todavía no hay veredicto.
+ *   ok        → tilde verde.
+ *   mal       → cruz roja.
+ *   sin-dato  → raya gris. NO es un veredicto: es "no se pudo comparar" (el
+ *               proveedor no tenía orden de compra, o nadie lo verificó).
+ *
+ * El cuarto es el que hace que los otros signifiquen algo. Una raya y una cruz
+ * tienen que verse distinto porque piden cosas distintas: la cruz es un problema
+ * del artículo, la raya es la ausencia de una comparación.
+ */
+export type EstadoVeredicto = 'cargando' | 'ok' | 'mal' | 'sin-dato';
+
+export function CeldaVeredicto({
+  estado,
+  texto,
+}: {
+  estado: EstadoVeredicto;
+  texto: string;
+}) {
+  const contenido =
+    estado === 'cargando' ? (
+      <span style={{ color: 'var(--muted-2)', display: 'inline-flex' }}>
+        <Spinner size={12} />
+      </span>
+    ) : estado === 'ok' ? (
+      <IconoTilde />
+    ) : estado === 'mal' ? (
+      <IconoCruz />
+    ) : (
+      // Raya y no un icono: cualquier símbolo compite con el tilde y la cruz, y
+      // esto justamente no es un veredicto.
+      <span style={{ color: 'var(--muted-3)', fontWeight: 700, fontSize: 13 }}>—</span>
+    );
+
+  return (
+    <Tooltip
+      texto={texto}
+      ancho={250}
+      wrapperStyle={{
+        width: ANCHO_COL_VEREDICTO,
+        flex: 'none',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: 'help',
+      }}
+      fondo={estado === 'mal' ? '#d4412d' : estado === 'ok' ? '#25a54f' : '#4a5568'}
+    >
+      {contenido}
+    </Tooltip>
+  );
+}
+
+function IconoTilde() {
+  return (
+    <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="var(--ok)" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
+  );
+}
+
+function IconoCruz() {
+  return (
+    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="var(--err)" strokeWidth={3} strokeLinecap="round" aria-hidden>
+      <path d="M18 6 6 18M6 6l12 12" />
+    </svg>
+  );
+}
+
+/**
+ * Encabezado de las tres columnas. Se usa en la fila de títulos de la lista para
+ * que las etiquetas caigan exactamente sobre las celdas.
+ */
+export function EncabezadoVeredictos() {
+  const cel = {
+    width: ANCHO_COL_VEREDICTO,
+    flex: 'none' as const,
+    textAlign: 'center' as const,
+  };
+  return (
+    <>
+      <span style={cel} title="¿El código existe en el catálogo del sistema?">ART.</span>
+      <span style={cel} title="¿El precio coincide con la orden de compra?">$</span>
+      <span style={cel} title="¿La cantidad coincide con el saldo de la orden de compra?">STOCK</span>
+    </>
+  );
+}
+
 // --- Iconos por artículo -----------------------------------------------------
+
 
 export type EstadoMatch = 'procesando' | 'match' | 'sin-match' | 'sin-verificar' | 'sin-oc';
 
@@ -271,6 +376,57 @@ function fechaCortaIso(iso: string | null): string | null {
  * moviendo, así que re-consultarla mostraría un número que no es el que produjo
  * el flag que se está mirando.
  */
+/**
+ * Texto del tooltip de las columnas $ y STOCK.
+ *
+ * Reusa `conEvidencia`, que es donde vive el par de valores contrastados
+ * (`OC: $1.234,56 · Remito: $1.300,00`) y la referencia a la línea imputada. La
+ * presentación cambió a columnas; la información que hace auditable el veredicto
+ * es la misma y no se duplica.
+ */
+export function textoVeredictoOc(
+  campo: 'precio' | 'stock',
+  it: {
+    precioMatch?: boolean | null;
+    stockMatch?: boolean | null;
+    OCNumero?: string | null;
+    OCLinea?: string | null;
+    ocCantidad?: number | null;
+    ocPrecioUnitario?: number | null;
+    cantidad: number | string;
+    precio_unitario: number;
+  },
+  r: {
+    ocLineasProveedor?: number | null;
+    ocNumeros?: string[] | null;
+    ocVerificadaEn?: string | null;
+  },
+  validando: boolean,
+): string {
+  if (validando) {
+    return campo === 'precio'
+      ? 'Precio: verificando contra la orden de compra…'
+      : 'Cantidad: verificando contra la orden de compra…';
+  }
+  const flag = campo === 'precio' ? it.precioMatch : it.stockMatch;
+  const estado: EstadoMatch =
+    r.ocLineasProveedor === 0 ? 'sin-oc' : estadoDeFlag(flag);
+  return conEvidencia(
+    TOOLTIPS[campo][estado],
+    estado,
+    campo,
+    {
+      numero: it.OCNumero ?? null,
+      linea: it.OCLinea ?? null,
+      cantidad: it.ocCantidad ?? null,
+      precioUnitario: it.ocPrecioUnitario ?? null,
+      verificadaEn: r.ocVerificadaEn ?? null,
+      numerosContrastados: r.ocNumeros ?? null,
+    },
+    { cantidad: it.cantidad, precioUnitario: it.precio_unitario },
+  );
+}
+
 function conEvidencia(
   texto: string,
   estado: EstadoMatch,

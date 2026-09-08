@@ -15,7 +15,14 @@ import {
 } from '../components/DesglosePercepciones';
 // `Spinner` ya no se importa: el único indicador animado de la card es
 // `BadgeOrdenCompra`. `BadgeSinErp` tampoco (su uso quedó comentado más abajo).
-import { BadgeOcContrastada, BadgeOrdenCompra, IconosMatch } from '../components/OrdenCompra';
+import {
+  BadgeOcContrastada,
+  BadgeOrdenCompra,
+  CeldaVeredicto,
+  EncabezadoVeredictos,
+  textoVeredictoOc,
+  type EstadoVeredicto,
+} from '../components/OrdenCompra';
 import { formatNroComprobante } from '../utils/comprobante';
 import {
   advertenciasExistenciaErp,
@@ -27,6 +34,7 @@ import {
   validarRemito,
   type Advertencia,
   type CampoAdvertencia,
+  cuadraElComprobante,
 } from '../utils/validacionFactura';
 
 // Fondo de la burbuja de advertencia (ámbar oscuro, legible con texto blanco).
@@ -469,11 +477,17 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
           // `ocProcesando` alimenta los semáforos: mientras se valida, ningún flag
           // es confiable todavía.
           const ocProcesando = validando;
-          // Errores (bloquean) y avisos (no bloquean) del comprobante. Cada uno ya está
-          // marcado en amarillo sobre su campo; acá sólo se usa para el color/estado del botón.
+          /**
+           * Errores del comprobante (bloquean la confirmación en el modal).
+           *
+           * Ya NO se usa el total de advertencias para el color del botón: eso
+           * incluía los avisos de "importes en cero", que son el caso normal, y
+           * dejaba el botón ámbar en casi toda factura. Ahora el ámbar de la
+           * factura sale de `cuadra` y el del remito de `matchRemito`, que son los
+           * dos hechos sobre los que el operador puede decidir algo.
+           */
           const advCard = advertenciasPorRemito[r.id] ?? [];
           const erroresCard = soloErrores(advCard);
-          const hayAdvertenciasCard = advCard.length > 0;
 
           /**
            * Gate de la carga: sin códigos verificados el remito NO se puede cargar.
@@ -488,6 +502,60 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
            * justamente lo que dispara la verificación: bloquearla sería un
            * interbloqueo.
            */
+          /**
+           * Estado de cada una de las tres columnas de veredicto, por artículo.
+           *
+           * Un solo lugar que traduce los flags a lo que se dibuja, para que las
+           * tres columnas no puedan divergir en su criterio de "sin dato".
+           *
+           * `sinOc === true` fuerza raya en las dos columnas de la orden de
+           * compra: no es que no coincida, es que no había con qué comparar. Y el
+           * spinner gana sobre todo mientras la verificación está en vuelo — un
+           * veredicto de la corrida anterior mostrado como si fuera de esta es
+           * peor que no mostrar nada.
+           */
+          const sinOcDelProveedor = r.ocLineasProveedor === 0;
+          const veredicto = (flag: boolean | null | undefined, esDeOc: boolean): EstadoVeredicto => {
+            if (validando) return 'cargando';
+            if (esDeOc && sinOcDelProveedor) return 'sin-dato';
+            if (flag === true) return 'ok';
+            if (flag === false) return 'mal';
+            return 'sin-dato';
+          };
+
+          /**
+           * ¿Cuántos artículos puede cargar el sistema?
+           *
+           * Determina qué dice y de qué color es el botón, porque la consecuencia
+           * de apretarlo es distinta en cada caso:
+           *
+           *   completo → el sistema carga todo. Verde, "Cargar remito".
+           *   parcial  → el sistema carga una parte y el resto lo hace una
+           *              persona. Ámbar, y el texto lo dice.
+           *   ninguno  → el sistema no carga nada. El botón sólo registra la
+           *              carga en Ficha; la mercadería la ingresa alguien a mano.
+           *
+           * El tercero es el que más importa comunicar: apretar un botón que dice
+           * "Cargar remito" y que no cargue nada en el sistema es la peor versión
+           * de un fallo silencioso — el operador se va convencido de que terminó.
+           *
+           * Se calcula sobre los artículos con veredicto: mientras se verifica,
+           * `validando` gana y el botón muestra otra cosa.
+           */
+          // ¿Cierra `subtotal − bonificaciones + percepciones + IVA = total`?
+          // Es lo único que decide el color del botón de FACTURA: se recalcula del
+          // estado, así que al corregir un importe pasa a verde solo.
+          const cuadra = cuadraElComprobante(r);
+
+          const conVeredicto = items.filter((it) => it.existeEnErp != null);
+          const fichables = conVeredicto.filter((it) => it.existeEnErp === true).length;
+          const matchRemito: 'completo' | 'parcial' | 'ninguno' =
+            conVeredicto.length === 0 || fichables === conVeredicto.length
+              ? 'completo'
+              : fichables === 0
+                ? 'ninguno'
+                : 'parcial';
+
           const codigosOk = codigosVerificados(r);
           /**
            * Bloquea si los códigos no están verificados O si se está validando.
@@ -655,18 +723,23 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                     )}
                   </span>
                   {/*
-                    Total de UNIDADES, espejando el contador de artículos de la
-                    izquierda. Son dos preguntas distintas y las dos se hacen: 22
-                    renglones y 336 unidades no son lo mismo, y el que descarga la
-                    mercadería cuenta unidades.
-
-                    `fmtCantidad` y no el número crudo: las cantidades pueden ser
-                    decimales (1,5 kg) y el formateo es-AR es el mismo que usa cada
-                    renglón — un total con punto decimal al lado de renglones con
-                    coma parecería otra cosa.
+                    Encabezados de la derecha, en UN grupo flex con el MISMO `gap`
+                    que el grupo derecho de cada fila. Así las etiquetas caen
+                    exactamente sobre sus celdas: los anchos los fija
+                    `ANCHO_COL_VEREDICTO` y el badge de cantidad su `minWidth`.
+                    Si los gaps se desincronizan, las columnas se corren y no hay
+                    nada que lo avise.
                   */}
                   {showItems && (
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 'none' }}>
+                    <EncabezadoVeredictos />
+                    {/*
+                      Total de UNIDADES, espejando el contador de artículos de la
+                      izquierda. Son dos preguntas distintas y las dos se hacen: 22
+                      renglones y 336 unidades no son lo mismo, y el que descarga la
+                      mercadería cuenta unidades.
+                    */}
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 58, justifyContent: 'center' }}>
                       CANT.
                       <span
                         style={{
@@ -681,6 +754,7 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                         {fmtCantidad(totalUnidades(r))}
                       </span>
                     </span>
+                  </span>
                   )}
                 </div>
                 <div style={{ display: 'grid', gridTemplateRows: showItems ? '1fr' : '0fr', transition: 'grid-template-rows .28s ease' }}>
@@ -697,16 +771,10 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                     const warnNombre = warnFor(r.id, 'nombre', it.id);
                     const warnCodigo = warnFor(r.id, 'codigo', it.id);
                     const warnCantidad = warnFor(r.id, 'cantidad', it.id);
-                    // El código no existe en el sistema para este proveedor: la carga
-                    // automática lo saltea y lo tiene que cargar el operador a mano.
-                    //
-                    // `noExiste` sale del FLAG y `warnSinErp` de las advertencias, y no
-                    // son lo mismo: `advertenciasExistenciaErp` no emite nada mientras la
-                    // etapa de OC está corriendo, así que durante la consulta la fila no
-                    // se tiñe ni aparece el ícono. Sin esa distinción, el remito parpadea
-                    // en ámbar mientras se verifica.
-                    const noExiste = it.existeEnErp === false;
-                    const warnSinErp = warnFor(r.id, 'codigo', it.id);
+                    // El veredicto del código pasó a la columna ART. (tilde/cruz), así
+                    // que ya no hacen falta ni el flag `noExiste` ni la advertencia por
+                    // campo: la columna lee `existeEnErp` directo y su tooltip explica
+                    // cada uno de los tres estados.
                     return (
                       <div
                         key={it.id}
@@ -717,12 +785,12 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                           gap: 12,
                           padding: '10px 0',
                           borderTop: '1px solid #f2f4f8',
-                          // Tinte ámbar de TODA la fila cuando el código no existe en
-                          // el sistema: el aviso es del artículo entero, no de una
-                          // celda. Es el único tinte de fila que queda — el de "no
-                          // coincide con la OC" se sacó porque no pedía ninguna acción
-                          // del operador y competía con este, que sí.
-                          background: noExiste ? '#fdf9f0' : undefined,
+                          // SIN tinte de fila. El veredicto del código ahora vive en
+                          // la columna ART. como una cruz roja, que es más preciso y
+                          // no compite con nada: pintar el renglón entero de ámbar
+                          // hacía que una lista con varios códigos faltantes se
+                          // volviera un bloque amarillo donde no se distinguía cuál
+                          // era cuál.
                           opacity: editing && !checked ? 0.45 : 1,
                           transition: 'opacity .12s ease',
                         }}
@@ -742,7 +810,11 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                                 <span
                                   style={{
                                     fontSize: 14,
-                                    color: warnNombre.length ? 'var(--warn)' : 'var(--ink-2)',
+                                    // Sin ámbar: el color de advertencia se sacó de
+                                    // las filas. El dato del problema no se pierde —
+                                    // queda el tooltip, y el subrayado punteado avisa
+                                    // que hay algo que leer.
+                                    color: 'var(--ink-2)',
                                     overflow: 'hidden',
                                     textOverflow: 'ellipsis',
                                     whiteSpace: 'nowrap',
@@ -763,7 +835,8 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                                   <span
                                     style={{
                                       fontSize: 11.5,
-                                      color: warnCodigo.length ? 'var(--warn)' : 'var(--muted-2)',
+                                      color: 'var(--muted-2)', // sin ámbar en las filas
+
                                       fontVariantNumeric: 'tabular-nums',
                                       cursor: warnCodigo.length ? 'help' : undefined,
                                       textDecoration: warnCodigo.length ? 'underline dotted' : undefined,
@@ -777,64 +850,43 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                               })()
                             ) : null}
                           </div>
-                          {/*
-                            El icono va en esta columna (`flex: 1`) y no en el grupo de
-                            la derecha: cualquier cosa agregada allá corre el badge de
-                            cantidad y deja las columnas desalineadas entre filas — el
-                            mismo problema que documenta el `minWidth` de más abajo.
-                          */}
-                          {/*
-                            Veredicto del código, por artículo. Tres estados:
-                              · existe        → tick verde chico, discreto
-                              · no existe     → ícono ámbar + tooltip + fila ámbar
-                              · sin verificar → nada
-                            El tercero no muestra nada a propósito: un ícono neutro para
-                            "no sé" es indistinguible de un veredicto y hace que el tick
-                            verde deje de significar algo.
-                          */}
-                          {it.existeEnErp === true && <TickCodigoOk />}
-                          {warnSinErp.length > 0 && conAdvertencia(warnSinErp, <IconoCodigoInexistente />)}
                         </div>
                         <span style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 'none' }}>
                           {/*
-                            Semáforos de la ORDEN DE COMPRA: $ (precio) y caja (cantidad).
-                            Amarillo mientras la consulta está en vuelo, después verde o
-                            rojo según el flag; `null` (sin OC del proveedor, o sin
-                            verificar) queda amarillo, que es lo honesto — no es que no
-                            coincida, es que no había con qué comparar.
+                            TRES COLUMNAS de veredicto: ART. / $ / STOCK.
+                            
+                            Antes eran dos iconos ($ y caja) apretados a la derecha
+                            más un tercer indicador —el del código— del otro lado del
+                            renglón: tres veredictos en dos lugares y con tres formas
+                            distintas. Ahora una columna por pregunta, con ancho fijo,
+                            así el ojo baja por la columna y encuentra las cruces sin
+                            leer la fila.
 
-                            Son un flujo DISTINTO del ícono ámbar de la izquierda:
-                              · acá     → ¿coincide con lo que se pidió? Informativo.
-                              · ícono ← → ¿el código existe? BLOQUEA la carga.
-                            Por eso viven en lados opuestos de la fila y sólo el segundo
-                            tiñe el renglón.
-
-                            `MarcaSinErp` (la cajita roja) NO vuelve: duplicaba el ícono
-                            de la izquierda en otro color, y dos indicadores del mismo
-                            hecho parecen dos problemas.
+                            Las dos primeras responden preguntas de naturaleza
+                            distinta, y eso NO cambió:
+                              · ART.       → ¿el código existe? BLOQUEA la carga.
+                              · $ y STOCK  → ¿coincide con lo pedido? Informativo.
+                            Lo que cambió es la presentación, no la semántica.
                           */}
-                          <IconosMatch
-                            estado={ocProcesando ? 'procesando' : 'resuelto'}
-                            precioMatch={it.precioMatch}
-                            stockMatch={it.stockMatch}
-                            ocNumero={it.OCNumero}
-                            ocLinea={it.OCLinea}
-                            // Los valores que la OC tenía AL COMPARAR, para que el
-                            // tooltip diga en cuánto no coincide y no sólo que no
-                            // coincide.
-                            ocCantidad={it.ocCantidad}
-                            ocPrecioUnitario={it.ocPrecioUnitario}
-                            // Sin esto, "el proveedor no tiene OC" y "todavía no se
-                            // verificó" llegan iguales (`null`) y se pintan amarillos.
-                            ocLineasProveedor={r.ocLineasProveedor}
-                            // Para el caso "no se imputó a ninguna línea": lo útil
-                            // ahí no es el valor de la OC (no hay) sino cuáles se
-                            // revisaron.
-                            ocNumeros={r.ocNumeros}
-                            ocVerificadaEn={r.ocVerificadaEn}
-                            // El lado del remito del par de valores.
-                            cantidad={it.cantidad}
-                            precioUnitario={it.precio_unitario}
+                          <CeldaVeredicto
+                            estado={veredicto(it.existeEnErp, false)}
+                            texto={
+                              validando
+                                ? 'Verificando el código contra el catálogo del sistema…'
+                                : it.existeEnErp === true
+                                  ? `El código existe en el sistema${it.codigoErp ? ` (${it.codigoErp})` : ''}.`
+                                  : it.existeEnErp === false
+                                    ? 'Este código NO existe en el catálogo del sistema para este proveedor. El sistema no lo va a cargar: hay que darlo de alta o cargarlo a mano.'
+                                    : 'Todavía no se verificó si el código existe en el sistema.'
+                            }
+                          />
+                          <CeldaVeredicto
+                            estado={veredicto(it.precioMatch, true)}
+                            texto={textoVeredictoOc('precio', it, r, validando)}
+                          />
+                          <CeldaVeredicto
+                            estado={veredicto(it.stockMatch, true)}
+                            texto={textoVeredictoOc('stock', it, r, validando)}
                           />
                           {/*
                             minWidth fijo + tabular-nums: sin esto el ancho del
@@ -849,11 +901,13 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                                 style={{
                                   fontSize: 14,
                                   fontWeight: 700,
-                                  color: warnCantidad.length ? 'var(--warn)' : 'var(--navy)',
-                                  background: warnCantidad.length ? '#fdf8ec' : 'var(--blue-weak)',
-                                  border: warnCantidad.length ? '1px solid #f3dca6' : undefined,
+                                  // Sin ámbar ni borde: el badge queda siempre igual
+                                  // para que la columna no baile de fila en fila. El
+                                  // aviso vive en el tooltip.
+                                  color: 'var(--navy)',
+                                  background: 'var(--blue-weak)',
                                   borderRadius: 6,
-                                  padding: warnCantidad.length ? '1px 9px' : '2px 10px',
+                                  padding: '2px 10px',
                                   minWidth: 58,
                                   textAlign: 'center',
                                   fontVariantNumeric: 'tabular-nums',
@@ -923,22 +977,35 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                   )}
                   <div style={{ display: 'flex', gap: 12 }}>
                     {!esFacturaACargar && (
+                      /*
+                        Acción SECUNDARIA, no un botón al lado del principal.
+                        
+                        Tenía el mismo alto, el mismo peso de fuente y un borde
+                        propio, así que competía de igual a igual con "Cargar
+                        remito" — y no es una alternativa a cargar: es un ajuste
+                        que se usa en los pocos casos donde no se carga todo.
+                        Cuando está activo sí toma color, porque ahí es un modo en
+                        el que la pantalla está y conviene que se note.
+                      */
                       <button
                         onClick={() => toggleEdit(r)}
-                        title="Seleccionar qué artículos cargar"
+                        title="Elegir qué artículos cargar (por defecto se cargan todos)"
                         style={{
                           height: 44,
-                          padding: '0 26px',
-                          borderRadius: 9,
-                          border: '1px solid #cfd8e6',
-                          background: editing ? 'var(--blue-weak)' : '#fff',
-                          color: 'var(--blue)',
-                          fontWeight: 700,
-                          fontSize: 14,
+                          padding: '0 12px',
+                          borderRadius: 8,
+                          border: 'none',
+                          background: editing ? 'var(--blue-weak)' : 'transparent',
+                          color: editing ? 'var(--blue)' : 'var(--muted)',
+                          fontWeight: editing ? 700 : 600,
+                          fontSize: 13,
+                          textDecoration: editing ? 'none' : 'underline',
+                          textDecorationColor: '#cfd8e6',
+                          textUnderlineOffset: 4,
                           cursor: 'pointer',
                         }}
                       >
-                        {editing ? 'Listo' : 'Seleccionar artículos'}
+                        {editing ? 'Listo' : 'Elegir artículos'}
                       </button>
                     )}
                     {/*
@@ -959,11 +1026,17 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                           ? validando
                             ? 'Verificando los códigos contra el catálogo del sistema. En cuanto termine se habilita.'
                             : 'Los códigos todavía no se verificaron contra el catálogo del sistema. Hasta saber cuáles existen no se puede cargar: si uno no existe, el sistema rechaza el remito completo. Usá "Reverificar códigos".'
-                          : erroresCard.length > 0
-                            ? `${erroresCard.length} dato(s) a corregir`
-                            : hayAdvertenciasCard
-                              ? 'Hay datos para revisar'
-                              : undefined
+                          : !esFacturaACargar && matchRemito === 'ninguno'
+                            // El caso que más hay que explicar: el botón NO carga
+                            // la mercadería, sólo la registra acá.
+                            ? 'Ningún código existe en el sistema: la carga hay que hacerla a mano en el ERP. Esto sólo la registra en Ficha.'
+                            : !esFacturaACargar && matchRemito === 'parcial'
+                              ? `El sistema carga ${fichables} de ${conVeredicto.length} artículos. El resto hay que cargarlo a mano en el ERP.`
+                              : erroresCard.length > 0
+                                ? `${erroresCard.length} dato(s) a corregir`
+                                : esFacturaACargar && !cuadra
+                                  ? 'Subtotal − bonificaciones + percepciones + IVA no da el total. Revisá los importes; se puede cargar igual.'
+                                  : undefined
                       }
                       style={{
                         height: 44,
@@ -973,9 +1046,18 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                         background:
                           busyId === r.id || (editing && selCount === 0) || bloqueadoPorCodigos
                             ? '#8a94a6'
-                            : hayAdvertenciasCard
-                              ? 'var(--warn)'
-                              : 'var(--ok)',
+                            : esFacturaACargar
+                              // FACTURA: ámbar sólo si la aritmética no cierra.
+                              // Antes dependía de `hayAdvertenciasCard`, que es
+                              // true en casi toda factura (avisa por
+                              // bonificaciones en 0), así que el ámbar no
+                              // distinguía nada.
+                              ? (!cuadra ? 'var(--warn)' : 'var(--ok)')
+                              // REMITO: ámbar en parcial y en carga manual,
+                              // porque en los dos el sistema no carga todo.
+                              : matchRemito === 'completo'
+                                ? 'var(--ok)'
+                                : 'var(--warn)',
                         color: '#fff',
                         fontWeight: 700,
                         fontSize: 14,
@@ -993,11 +1075,15 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                             : 'Códigos sin verificar'
                           : editing
                             ? `Cargar (${selCount})`
-                            : r.facturaCargada === true
-                              ? 'Cargar Remito'
-                              : hayAdvertenciasCard
-                                ? 'Revisar factura'
-                                : 'Cargar Factura'}
+                            : esFacturaACargar
+                              ? !cuadra
+                                ? 'Revisar totales y cargar'
+                                : 'Cargar Factura'
+                              : matchRemito === 'ninguno'
+                                ? 'Aceptar carga manual'
+                                : matchRemito === 'parcial'
+                                  ? 'Cargar remito parcial'
+                                  : 'Cargar Remito'}
                     </button>
                   </div>
                 </div>
@@ -1134,6 +1220,7 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
     </div>
   );
 }
+
 
 /**
  * Contador de artículos observados, para verlo con la card colapsada.
@@ -1309,32 +1396,6 @@ function HeadCell({ label, value, big, warn }: { label: string; value: string; b
  * Marca del ítem que no tiene respaldo de orden de compra. Va dentro de un
  * `conAdvertencia`, que le pone el tooltip con el motivo.
  */
-/**
- * El código existe en el catálogo del sistema.
- *
- * Chico y sin fondo: es el caso NORMAL y no tiene que competir con el ámbar del
- * que no existe. Confirma sin pedir atención — si el verde pesara lo mismo que el
- * ámbar, una lista de 40 artículos correctos taparía el único que importa.
- */
-function TickCodigoOk() {
-  return (
-    <svg
-      width="13"
-      height="13"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="var(--ok)"
-      strokeWidth={3}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      style={{ flex: 'none' }}
-      aria-label="El código existe en el sistema"
-    >
-      <title>El código existe en el catálogo del sistema para este proveedor</title>
-      <path d="M20 6 9 17l-5-5" />
-    </svg>
-  );
-}
 
 /** Flecha circular de recargar. Sin texto: va en un botón de 30x30 del header. */
 function IconoRecargar() {
@@ -1356,31 +1417,6 @@ function IconoRecargar() {
   );
 }
 
-function IconoCodigoInexistente() {
-  return (
-    <span
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        width: 20,
-        height: 20,
-        flex: 'none',
-        borderRadius: 5,
-        border: '1px solid #f3dca6',
-        background: '#fdf8ec',
-        color: 'var(--warn)',
-        cursor: 'help',
-      }}
-    >
-      <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-        <path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9" />
-        <path d="M8 7h6M8 11h4" />
-        <path d="M18 10v5M18 19h.01" />
-      </svg>
-    </span>
-  );
-}
 
 /** Envuelve un nodo en un tooltip ámbar con los mensajes de advertencia del campo. */
 function conAdvertencia(warn: string[], node: ReactNode): ReactNode {

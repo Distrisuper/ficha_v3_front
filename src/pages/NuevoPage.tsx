@@ -9,7 +9,7 @@ import { ApiError } from '../api/client';
 import { STAGES_EXTRACCION, useProceso } from '../hooks/useProceso';
 import type { ProcesoStage } from '../types/events';
 import type { Articulo, Remito, RemitoTipo } from '../types/api';
-import { money } from '../utils/money';
+import { fmtCantidad, money } from '../utils/money';
 import {
   contenidoDesglosePercepciones,
   estiloTooltipDesglose,
@@ -28,8 +28,8 @@ import {
   soloErrores,
   validarLote,
   type CampoAdvertencia,
+  cuadraElComprobante,
 } from '../utils/validacionFactura';
-import { useLocalStorage } from '../hooks/useLocalStorage';
 
 // Color de fondo de la burbuja de advertencia (ámbar oscuro, legible con texto blanco).
 const TOOLTIP_WARN_BG = '#c99c3d';
@@ -100,7 +100,19 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
   const perms = permsFor(auth);
 
   // Persistido en localStorage (igual que la sucursal) para que sobreviva al cerrar/abrir.
-  const [proveedorId, setProveedorId] = useLocalStorage('ficha_proveedor_id');
+  /**
+   * El proveedor arranca SIN seleccionar en cada carga de la página.
+   *
+   * Antes vivía en `localStorage`, así que al recargar quedaba el del comprobante
+   * anterior — y en una PC compartida, el del turno anterior. Subir el PDF de un
+   * proveedor con otro preseleccionado es un error que no da ningún síntoma: el
+   * comprobante queda cargado al proveedor equivocado y se descubre cuando no
+   * coincide con ninguna orden de compra.
+   *
+   * Elegirlo de nuevo cuesta un click. La sucursal SÍ sigue recordándose (vive en
+   * el DataContext): es la vista del operador, no un dato del comprobante.
+   */
+  const [proveedorId, setProveedorId] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState<Status>(() => (loadStored(STORAGE_KEY).length > 0 ? 'done' : 'idle'));
   const [, setLog] = useState<{ text: string; type: string }[]>([]);
@@ -291,6 +303,23 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
     [filas, remitoSel],
   );
 
+  /**
+   * Suma de cantidades de las filas VISIBLES.
+   *
+   * Visibles y no todas: cuando el operador filtra por un remito del lote, el
+   * encabezado tiene que hablar de lo que está mirando. Un total del lote entero
+   * al lado de una lista filtrada es un número que no cierra con nada de lo que
+   * hay en pantalla.
+   *
+   * `toNumero` y no `Number(...)`: la cantidad puede llegar como string con coma
+   * decimal, y ahí `Number()` da NaN — que el `|| 0` convertiría en cero,
+   * descontando el artículo del total en silencio.
+   */
+  const totalUnidadesFilas = useMemo(
+    () => visibleFilas.reduce((acc, f) => acc + toNumero(f.articulo.cantidad), 0),
+    [visibleFilas],
+  );
+
   const totals = useMemo(() => {
     const subtotal = scope.reduce((a, r) => a + Number(r.subtotal || 0), 0);
     const percepciones = scope.reduce((a, r) => a + Number(r.percepciones || 0), 0);
@@ -321,6 +350,13 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
   const bloqueadoPorValidacion = errores.length > 0;
   // Hay algo para revisar (bloqueante o no): cambia el color y el texto del botón.
   const hayAdvertencias = advertencias.length > 0;
+  /**
+   * ¿Cierra la aritmética de TODOS los comprobantes del lote?
+   *
+   * Uno que no cuadra alcanza para pintar el botón: el botón procesa el lote
+   * completo, así que tiene que reflejar el peor caso. `every` y no `some`.
+   */
+  const cuadra = remitosCargados.every((r) => cuadraElComprobante(r));
 
   // Índice campo → mensajes, para pintar de amarillo cada input/celda con su tooltip.
   const advIndex = useMemo(() => indexarPorCampo(advertencias), [advertencias]);
@@ -764,7 +800,18 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
                 <span>
                   PRODUCTO <span style={countBadge}>{filas.length}</span>
                 </span>
-                <span style={{ textAlign: 'right' }}>CANT.</span>
+                {/*
+                  Total de UNIDADES, igual que en Pendientes. El badge de al lado
+                  cuenta RENGLONES; son dos preguntas distintas y las dos se hacen:
+                  22 renglones y 336 unidades no son lo mismo, y el que descarga la
+                  mercadería cuenta unidades.
+
+                  `fmtCantidad` y no el número crudo: las cantidades pueden ser
+                  decimales y el formateo es-AR es el mismo que usa cada fila.
+                */}
+                <span style={{ textAlign: 'right' }}>
+                  CANT. <span style={countBadge}>{fmtCantidad(totalUnidadesFilas)}</span>
+                </span>
                 <span style={{ textAlign: 'right' }}>PRECIO UNIT.</span>
                 <span style={{ textAlign: 'right' }}>TOTAL</span>
               </div>
@@ -1046,23 +1093,46 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
               title={
                 bloqueadoPorValidacion
                   ? `${errores.length} dato(s) a corregir antes de procesar`
-                  : avisos.length > 0
-                    ? `${avisos.length} dato(s) para revisar`
-                    : undefined
+                  : !cuadra
+                    ? 'Subtotal − bonificaciones + percepciones + IVA no da el total. Revisá los importes; se puede procesar igual.'
+                    : avisos.length > 0
+                      ? `${avisos.length} dato(s) para revisar`
+                      : undefined
               }
               style={{
                 marginTop: 8,
                 height: 46,
                 borderRadius: 9,
                 border: 'none',
-                background: remitosCargados.length === 0 || approving ? '#9bbfa8' : 'var(--ok)',
+                /**
+                 * ÁMBAR cuando la aritmética del comprobante no cierra, verde
+                 * cuando sí. Se actualiza en cuanto el operador corrige un
+                 * importe, porque `cuadra` se recalcula del estado.
+                 *
+                 * El color depende de ESE hecho y no de `hayAdvertencias`: la
+                 * regla de "importes en cero" avisa por bonificaciones en 0, que
+                 * es el caso normal, así que con `hayAdvertencias` el botón
+                 * quedaba ámbar siempre y el ámbar dejaba de significar algo.
+                 */
+                background:
+                  remitosCargados.length === 0 || approving
+                    ? '#9bbfa8'
+                    : !cuadra
+                      ? 'var(--warn)'
+                      : 'var(--ok)',
                 color: '#fff',
                 fontWeight: 700,
                 fontSize: 15,
                 cursor: remitosCargados.length === 0 || approving ? 'not-allowed' : 'pointer',
               }}
             >
-              {approving ? 'Procesando…' : hayAdvertencias ? 'Revisar y procesar' : 'Procesar factura'}
+              {approving
+                ? 'Procesando…'
+                : !cuadra
+                  ? 'Revisar totales y procesar'
+                  : hayAdvertencias
+                    ? 'Revisar y procesar'
+                    : 'Procesar factura'}
             </button>
           </div>
         </section>
