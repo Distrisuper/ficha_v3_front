@@ -23,3 +23,7 @@ dist-ssr
 *.sln
 *.sw?
 
+
+# Variables locales. La de deploy va como --build-arg (ver Dockerfile).
+.env
+.env.local

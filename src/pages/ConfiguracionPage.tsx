@@ -7,7 +7,7 @@ import { usersApi } from '../api/users';
 import { permsFor, isAdmin } from '../utils/roles';
 import { cuitEsValido, formatCuit, soloDigitos } from '../utils/cuit';
 import { ConfirmDialog } from '../components/ConfirmDialog';
-import type { CreateProveedorInput, Proveedor, Sucursal } from '../types/api';
+import type { CreateProveedorInput, CreateSucursalInput, Proveedor, Sucursal } from '../types/api';
 
 type ListKey = 'proveedores' | 'sucursales';
 
@@ -22,7 +22,6 @@ export function ConfiguracionPage() {
   const { proveedores, sucursales, reloadCatalogos, clearSucursal, sucursalId } = useData();
   const perms = permsFor(auth);
 
-  const [sucDraft, setSucDraft] = useState('');
   const [editKey, setEditKey] = useState<string | null>(null); // "proveedores:<id>" | "sucursales:<id>"
   const [editValue, setEditValue] = useState('');
   const [busy, setBusy] = useState(false);
@@ -58,17 +57,20 @@ export function ConfiguracionPage() {
     }
   }
 
-  async function addSucursal(value: string) {
-    const val = value.trim();
-    if (!val) return;
+  /**
+   * Devuelve true si el alta salió bien, para que el form sepa si limpiarse y
+   * cerrarse. Mismo contrato que `addProveedor`.
+   */
+  async function addSucursal(input: CreateSucursalInput): Promise<boolean> {
     setBusy(true);
     setErrorMsg(null);
     try {
-      await sucursalesApi.create(val);
-      setSucDraft('');
+      await sucursalesApi.create(input);
       await reloadCatalogos();
+      return true;
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : 'No se pudo crear');
+      return false;
     } finally {
       setBusy(false);
     }
@@ -103,7 +105,11 @@ export function ConfiguracionPage() {
     try {
       if (val) {
         if (listKey === 'proveedores') await proveedoresApi.update(id, val);
-        else await sucursalesApi.update(id, val);
+        // El PATCH de sucursales pasó a ser parcial (acepta `nombre` y/o
+        // `codigoERP`), así que el nombre va nombrado. La edición inline de la
+        // lista sigue siendo sólo del nombre: el código de depósito se edita
+        // desde el detalle, no con un doble click en la fila.
+        else await sucursalesApi.update(id, { nombre: val });
       }
       setEditKey(null);
       setEditValue('');
@@ -183,6 +189,22 @@ export function ConfiguracionPage() {
           }}
           subtitle={(p) => {
             const partes = [p.razonSocial, p.cuit ? formatCuit(p.cuit) : null].filter(Boolean);
+            /**
+             * El plazo se muestra SIEMPRE, incluso cuando falta.
+             *
+             * Un proveedor sin plazo no es un caso neutro: sus facturas se cargan
+             * con 30 días inventados. Si el dato solo apareciera cuando existe, la
+             * lista no diría nada sobre los que hay que completar — y completarlos
+             * es justo la acción que este campo habilita.
+             *
+             * `!= null` y no `?`: 0 es un plazo válido (vence el mismo día) y con
+             * un chequeo de verdad/falsedad se mostraría como "sin plazo".
+             */
+            partes.push(
+              p.diasVencimiento != null
+                ? `${p.diasVencimiento} días`
+                : 'sin plazo (usa 30)',
+            );
             return partes.length ? partes.join(' · ') : null;
           }}
           editKey={editKey}
@@ -208,12 +230,22 @@ export function ConfiguracionPage() {
           title="Sucursales"
           items={sucursales}
           add={{
-            mode: 'inline',
-            draft: sucDraft,
-            onDraftChange: setSucDraft,
-            onAdd: () => addSucursal(sucDraft),
-            placeholder: 'Nueva sucursal…',
+            mode: 'form',
+            renderForm: (close) => (
+              <SucursalAddForm busy={busy} onSubmit={addSucursal} onCancel={close} />
+            ),
           }}
+          subtitle={(s) =>
+            /*
+              El código de depósito se muestra SIEMPRE, incluso cuando falta.
+              Una sucursal sin código no ficha, y si el dato sólo apareciera
+              cuando existe, la lista no diría nada sobre las que hay que
+              completar — que es la acción que este campo habilita.
+            */
+            s.codigoERP
+              ? `Depósito ERP ${s.codigoERP}`
+              : 'sin código de depósito — no puede fichar'
+          }
           editKey={editKey}
           editValue={editValue}
           onEditValueChange={setEditValue}
@@ -495,6 +527,99 @@ function CrudSection<T extends { id: string; nombre: string }>({
   );
 }
 
+interface SucursalAddFormProps {
+  busy: boolean;
+  /** Devuelve true si el alta se guardó: recién ahí se limpia y se cierra. */
+  onSubmit: (input: CreateSucursalInput) => Promise<boolean>;
+  onCancel: () => void;
+}
+
+/**
+ * Form de alta de sucursal (depósito).
+ *
+ * ── Por qué dejó de ser un input inline ─────────────────────────────────────
+ * Antes el alta era un solo campo con el nombre. Ahora pide también el código de
+ * depósito del ERP, que es OBLIGATORIO: es el dato con el que el integrador
+ * escribe el comprobante y con el que se filtran las órdenes de compra
+ * pendientes. Antes ese código salía de una tabla hardcodeada en el conector
+ * (`MDP → 003`), así que agregar un depósito era un cambio de código.
+ *
+ * Mismo patrón que `ProveedorAddForm`: un useState por campo, booleanos
+ * derivados, sin librería de forms.
+ */
+function SucursalAddForm({ busy, onSubmit, onCancel }: SucursalAddFormProps) {
+  const [nombre, setNombre] = useState('');
+  const [codigoERP, setCodigoERP] = useState('');
+
+  const nombreValid = nombre.trim() !== '';
+  const codigoValid = codigoERP.trim() !== '';
+  const canSubmit = !busy && nombreValid && codigoValid;
+
+  async function submit() {
+    if (!canSubmit) return;
+    const ok = await onSubmit({ nombre: nombre.trim(), codigoERP: codigoERP.trim() });
+    if (!ok) return; // el error ya se muestra arriba; los campos quedan para corregir
+    setNombre('');
+    setCodigoERP('');
+    onCancel();
+  }
+
+  const onEnter = (e: KeyboardEvent) => {
+    if (e.key === 'Enter') void submit();
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <label style={fieldLabel}>
+        Nombre
+        <input
+          autoFocus
+          value={nombre}
+          onChange={(e) => setNombre(e.target.value)}
+          onKeyDown={onEnter}
+          placeholder="Cómo la llamás internamente"
+          style={fieldInput}
+        />
+      </label>
+      <label style={fieldLabel}>
+        Código de depósito (ERP)
+        <input
+          value={codigoERP}
+          // NO se normaliza (ni mayúsculas ni ceros a la izquierda): son códigos
+          // del ERP y cualquier transformación puede dejar de matchear con la
+          // base. Sólo se recorta el espacio de más al enviar.
+          onChange={(e) => setCodigoERP(e.target.value)}
+          onKeyDown={onEnter}
+          placeholder="ej. 003"
+          style={fieldInput}
+        />
+        <span style={{ fontSize: 11.5, color: 'var(--muted-2)', fontWeight: 500 }}>
+          El <code>CODIGODEPOSITO</code> de esta sucursal en el ERP. Con esto se
+          carga el comprobante y se buscan las órdenes de compra pendientes.
+        </span>
+      </label>
+      <div style={{ display: 'flex', gap: 10 }}>
+        <button
+          onClick={() => void submit()}
+          disabled={!canSubmit}
+          title={canSubmit ? undefined : 'Completá el nombre y el código de depósito'}
+          style={{
+            ...addBtn,
+            flex: 1,
+            background: canSubmit ? 'var(--ok)' : '#c3cad6',
+            cursor: canSubmit ? 'pointer' : 'not-allowed',
+          }}
+        >
+          {busy ? 'Creando…' : 'Crear sucursal'}
+        </button>
+        <button onClick={onCancel} disabled={busy} style={cancelBtn}>
+          Cancelar
+        </button>
+      </div>
+    </div>
+  );
+}
+
 interface ProveedorAddFormProps {
   busy: boolean;
   /** Devuelve true si el alta se guardó: recién ahí se limpia y se cierra. */
@@ -515,21 +640,43 @@ function ProveedorAddForm({ busy, onSubmit, onCancel }: ProveedorAddFormProps) {
   const [razonSocial, setRazonSocial] = useState('');
   const [cuit, setCuit] = useState('');
   const [codigoERP, setCodigoERP] = useState('');
+  // Como string y no como number: el input vacío es '' y `Number('')` es 0, así
+  // que con un number no habría forma de distinguir "no lo cargué" de "0 días".
+  const [diasVencimiento, setDiasVencimiento] = useState('');
 
   const nombreValid = nombre.trim() !== '';
   const razonValid = razonSocial.trim() !== '';
   const cuitValid = cuitEsValido(cuit);
   const codigoERPValid = codigoERP.trim() !== '';
-  const canSubmit = !busy && nombreValid && razonValid && cuitValid && codigoERPValid;
+  /**
+   * El plazo es OPCIONAL, así que vacío es válido. Lo que se valida es que si
+   * escribió algo, sea un entero de 0 a 365 — mismo rango que el schema del back,
+   * para que el error se vea al tipear y no después de un 400.
+   */
+  const diasNum = diasVencimiento === '' ? null : Number(diasVencimiento);
+  const diasValid =
+    diasNum === null ||
+    (Number.isInteger(diasNum) && diasNum >= 0 && diasNum <= 365);
+  const canSubmit =
+    !busy && nombreValid && razonValid && cuitValid && codigoERPValid && diasValid;
 
   async function submit() {
     if (!canSubmit) return;
-    const ok = await onSubmit({ nombre, razonSocial, cuit, codigoERP: codigoERP.trim() });
+    const ok = await onSubmit({
+      nombre,
+      razonSocial,
+      cuit,
+      codigoERP: codigoERP.trim(),
+      // Se OMITE si está vacío en vez de mandar 0: el back distingue `null` ("no
+      // se cargó", cae al default avisando) de `0` ("vence el mismo día").
+      ...(diasNum !== null ? { diasVencimiento: diasNum } : {}),
+    });
     if (!ok) return; // el error ya se muestra arriba; los campos quedan para corregir
     setNombre('');
     setRazonSocial('');
     setCuit('');
     setCodigoERP('');
+    setDiasVencimiento('');
     onCancel();
   }
 
@@ -588,12 +735,34 @@ function ProveedorAddForm({ busy, onSubmit, onCancel }: ProveedorAddFormProps) {
           style={fieldInput}
         />
       </label>
+      <label style={fieldLabel}>
+        Plazo de pago (días)
+        <input
+          value={diasVencimiento}
+          // Sólo dígitos: es un entero de días. El filtro va sobre el valor que
+          // entra al estado Y el input es controlado, así que lo que se muestra y
+          // lo que se guarda no pueden divergir.
+          onChange={(e) => setDiasVencimiento(e.target.value.replace(/[^0-9]/g, '').slice(0, 3))}
+          onKeyDown={onEnter}
+          placeholder="Opcional — ej. 20"
+          inputMode="numeric"
+          style={{ ...fieldInput, borderColor: !diasValid ? 'var(--err)' : 'var(--border-2)' }}
+        />
+        {!diasValid ? (
+          <span style={hintErr}>El plazo tiene que ser un número de 0 a 365 días</span>
+        ) : (
+          <span style={{ fontSize: 11.5, color: 'var(--muted-2)', fontWeight: 500 }}>
+            Días desde la fecha de la factura hasta su vencimiento. Si lo dejás
+            vacío, el integrador usa 30 días.
+          </span>
+        )}
+      </label>
       
       <div style={{ display: 'flex', gap: 10 }}>
         <button
           onClick={() => void submit()}
           disabled={!canSubmit}
-          title={canSubmit ? undefined : 'Completá los tres campos para habilitar'}
+          title={canSubmit ? undefined : 'Completá nombre, razón social, CUIT y código ERP para habilitar'}
           style={{
             ...addBtn,
             flex: 1,

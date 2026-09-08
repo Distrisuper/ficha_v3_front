@@ -126,14 +126,39 @@ export function DataProvider({ children }: { children: ReactNode }) {
     // detalle tuviera la misma proyección que el listado.
     const articulosPendientes = (remito.articulos ?? []).filter((a) => a.stockCargado !== true);
 
+    /**
+     * Se copia el remito COMPLETO, no tres campos elegidos a mano.
+     *
+     * Antes era `{...r, articulos, estado, facturaCargada}`: cualquier otro campo
+     * que cambiara del lado del servidor NO llegaba a la pantalla hasta un reload
+     * completo. Es el bug de "la validación terminó pero no se ve": el evento
+     * llegaba, el fetch traía el dato nuevo, y el merge lo descartaba.
+     *
+     * Concretamente se perdían `ocLineasProveedor` (si el proveedor tiene OC, que
+     * es lo que decide si los semáforos van en rojo "sin OC"), `subtotal`, `iva`,
+     * `percepciones`, `total` y `percepcionesDetalle`. Una lista blanca de campos
+     * a copiar es una lista que alguien tiene que acordarse de actualizar, y nadie
+     * se acuerda — el síntoma es siempre este.
+     *
+     * Lo único que NO viene del servidor es `articulos`, que se filtra abajo por la
+     * diferencia de proyección entre el detalle y el listado.
+     */
     setRemitos((prev) =>
       prev.map((r) =>
         r.id === id
           ? {
               ...r,
+              ...remito,
               articulos: articulosPendientes,
-              estado: remito.estado,
-              facturaCargada: remito.facturaCargada,
+              // `GET /remitos/:id` NO expande `proveedor` ni `sucursal` (el listado
+              // sí). Sin esto, el spread los pone en undefined y la card pierde los
+              // nombres — el mismo bug que el merge selectivo original evitaba a
+              // costa de perder todo lo demás.
+              //
+              // El arreglo de fondo es que el detalle tenga la misma proyección que
+              // el listado; mientras no la tenga, se conservan los del listado.
+              proveedor: remito.proveedor ?? r.proveedor,
+              sucursal: remito.sucursal ?? r.sucursal,
             }
           : r,
       ),
@@ -146,6 +171,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
   reloadRef.current = reloadRemitos;
   const refreshRef = useRef(refreshRemito);
   refreshRef.current = refreshRemito;
+  // La lista, por ref: el efecto de suscripción depende sólo de `subscribe`, así
+  // que leerla del closure la dejaría congelada en el primer render.
+  const remitosRef = useRef(remitos);
+  remitosRef.current = remitos;
   const sucursalRef = useRef(sucursalId);
   sucursalRef.current = sucursalId;
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -187,9 +216,35 @@ export function DataProvider({ children }: { children: ReactNode }) {
       void refreshRef.current(payload.remitoId);
     };
 
+    /**
+     * --- Una etapa FALLÓ: también hay que refrescar la card ---
+     *
+     * `proceso.fallido` viaja con `processId = jobId` y sin `remitoId`, así que no
+     * sirve para `cambio`. Se mapea jobId → remito con la lista que ya está en
+     * memoria.
+     *
+     * Sin esto quedaba un agujero: al fallar la etapa de orden de compra el back
+     * persiste `estado_oc = 'error'` pero NO publica ningún evento con `remitoId`
+     * (el `orden_compra.validada` sale sólo en el camino feliz). El cartel "Orden
+     * de compra no disponible" dependía entonces del tracker en memoria, que muere
+     * en cada refresh — de ahí el "sólo aparece si recargo".
+     *
+     * Mismo caso para la etapa de códigos: al fallar hay que traer
+     * `estado_codigos = 'error'` para que la card ofrezca "Reverificar" en vez de
+     * quedarse esperando un veredicto que no va a llegar.
+     */
+    const fallo = (evento: DomainEvent) => {
+      const jobId = evento.processId;
+      if (!jobId) return;
+      // Puede haber N remitos por job (un PDF con varios comprobantes).
+      const afectados = remitosRef.current.filter((r) => r.jobId === jobId);
+      for (const r of afectados) void refreshRef.current(r.id);
+    };
+
     const desuscribir = [
       subscribe('remito.listo_para_stock', alta),
       subscribe('orden_compra.validada', cambio),
+      subscribe('proceso.fallido', fallo),
     ];
 
     return () => {
