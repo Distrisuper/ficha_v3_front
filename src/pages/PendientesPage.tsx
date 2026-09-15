@@ -19,9 +19,10 @@ import {
   BadgeOcContrastada,
   BadgeOrdenCompra,
   CeldaVeredicto,
-  cantidadPorDebajoDeOc,
   EncabezadoVeredictos,
+  ocsPresentesEnArticulos,
   textoVeredictoOc,
+  veredictoOc,
   type EstadoVeredicto,
 } from '../components/OrdenCompra';
 import { formatNroComprobante } from '../utils/comprobante';
@@ -504,21 +505,20 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
            * interbloqueo.
            */
           /**
-           * Estado de cada una de las tres columnas de veredicto, por artículo.
+           * Estado de la columna ART. (¿el código existe en el catálogo?).
            *
-           * Un solo lugar que traduce los flags a lo que se dibuja, para que las
-           * tres columnas no puedan divergir en su criterio de "sin dato".
+           * Las columnas $ y STOCK ya NO pasan por acá: su criterio es el semáforo
+           * de la orden de compra (forma = hay orden, color = el valor da) y vive
+           * entero en `veredictoOc`. Tenerlo en dos lados era tenerlo en ninguno:
+           * este closure no sabía si la línea había quedado imputada, que es
+           * justamente lo que decide entre cruz y tilde.
            *
-           * `sinOc === true` fuerza raya en las dos columnas de la orden de
-           * compra: no es que no coincida, es que no había con qué comparar. Y el
-           * spinner gana sobre todo mientras la verificación está en vuelo — un
+           * El spinner gana sobre todo mientras la verificación está en vuelo: un
            * veredicto de la corrida anterior mostrado como si fuera de esta es
            * peor que no mostrar nada.
            */
-          const sinOcDelProveedor = r.ocLineasProveedor === 0;
-          const veredicto = (flag: boolean | null | undefined, esDeOc: boolean): EstadoVeredicto => {
+          const veredictoErp = (flag: boolean | null | undefined): EstadoVeredicto => {
             if (validando) return 'cargando';
-            if (esDeOc && sinOcDelProveedor) return 'sin-dato';
             if (flag === true) return 'ok';
             if (flag === false) return 'mal';
             return 'sin-dato';
@@ -623,7 +623,16 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                       badge de estado porque son excluyentes por construcción.
                     */
                     <BadgeOcContrastada
-                      ocNumeros={r.ocNumeros}
+                      /*
+                        Las OC de los ARTÍCULOS, no las contrastadas: `r.ocNumeros`
+                        son todas las que se miraron para armar el cruce, incluidas
+                        las que ningún renglón terminó usando. Se sigue pasando
+                        aparte porque es lo único que explica un remito sin ninguna
+                        imputación, y porque `null` ahí significa "nunca se
+                        verificó", que es lo que esconde el badge.
+                      */
+                      ocNumeros={r.ocNumeros == null ? null : ocsPresentesEnArticulos(items)}
+                      ocProveedor={r.ocNumeros}
                       ocVerificadaEn={r.ocVerificadaEn}
                     />
                   )}
@@ -870,7 +879,7 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                             Lo que cambió es la presentación, no la semántica.
                           */}
                           <CeldaVeredicto
-                            estado={veredicto(it.existeEnErp, false)}
+                            estado={veredictoErp(it.existeEnErp)}
                             texto={
                               validando
                                 ? 'Verificando el código contra el catálogo del sistema…'
@@ -881,20 +890,19 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                                     : 'Todavía no se verificó si el código existe en el sistema.'
                             }
                           />
+                          {/*
+                            Semáforo de la orden de compra. La FORMA dice si el
+                            renglón quedó imputado a una orden (tilde) o no (cruz);
+                            el COLOR, si el valor da (verde) o no (amarillo):
+                            precio exacto, y cantidad dentro del saldo pendiente.
+                            El criterio completo vive en `veredictoOc`.
+                          */}
                           <CeldaVeredicto
-                            estado={veredicto(it.precioMatch, true)}
+                            estado={veredictoOc('precio', it, r, validando)}
                             texto={textoVeredictoOc('precio', it, r, validando)}
                           />
                           <CeldaVeredicto
-                            /*
-                              El flag del back es igualdad exacta contra el saldo
-                              pendiente: que llegue MÁS y que llegue MENOS de lo
-                              esperado vienen los dos como `stockMatch: false`.
-                              Sólo el primero es un problema; el segundo es una
-                              entrega parcial y va en verde (ver
-                              `cantidadPorDebajoDeOc`). El dato crudo no se toca.
-                            */
-                            estado={veredicto(cantidadPorDebajoDeOc(it) ? true : it.stockMatch, true)}
+                            estado={veredictoOc('stock', it, r, validando)}
                             texto={textoVeredictoOc('stock', it, r, validando)}
                           />
                           {/*
