@@ -175,18 +175,24 @@ export const ANCHO_COL_VEREDICTO = 46;
  * había que leer la fila entera. Con una columna por pregunta y un ancho fijo, el
  * ojo baja por la columna y encuentra las cruces sin leer nada.
  *
- * ── Los cuatro estados ──────────────────────────────────────────────────────
+ * ── Los cinco estados ───────────────────────────────────────────────────────
  *   cargando  → spinner. La verificación está en vuelo; todavía no hay veredicto.
- *   ok        → tilde verde.
- *   mal       → cruz roja.
- *   sin-dato  → raya gris. NO es un veredicto: es "no se pudo comparar" (el
- *               proveedor no tenía orden de compra, o nadie lo verificó).
+ *   ok        → tilde VERDE. Hay orden y el valor da.
+ *   ok-aviso  → tilde AMARILLO. Hay orden, el valor no da. Ver `EstadoMatch`.
+ *   mal       → cruz roja. NO hay orden contra la que comparar.
+ *   sin-dato  → raya gris. NO es un veredicto: nadie lo verificó todavía.
  *
- * El cuarto es el que hace que los otros signifiquen algo. Una raya y una cruz
- * tienen que verse distinto porque piden cosas distintas: la cruz es un problema
- * del artículo, la raya es la ausencia de una comparación.
+ * ── Por qué un tilde amarillo y no una cruz ─────────────────────────────────
+ * El tilde responde "¿hay orden de compra detrás de este renglón?" y el color,
+ * "¿los valores dan?". Son dos preguntas y antes compartían un solo canal: un
+ * precio distinto y un artículo sin ninguna orden se veían igual (cruz roja), y
+ * son problemas de dueños distintos — uno lo arregla compras, el otro es
+ * mercadería que entra sin respaldo.
+ *
+ * La raya y la cruz también tienen que verse distinto por lo mismo: la cruz es un
+ * veredicto, la raya es la ausencia de uno.
  */
-export type EstadoVeredicto = 'cargando' | 'ok' | 'mal' | 'sin-dato';
+export type EstadoVeredicto = 'cargando' | 'ok' | 'ok-aviso' | 'mal' | 'sin-dato';
 
 export function CeldaVeredicto({
   estado,
@@ -201,7 +207,12 @@ export function CeldaVeredicto({
         <Spinner size={12} />
       </span>
     ) : estado === 'ok' ? (
-      <IconoTilde />
+      <IconoTilde color="var(--ok)" />
+    ) : estado === 'ok-aviso' ? (
+      // MISMO tilde, otro color: la forma afirma que hay orden de compra detrás
+      // del renglón —que es cierto— y el color dice que el valor no cerró.
+      // Dibujar otro símbolo rompería esa lectura.
+      <IconoTilde color="var(--warn)" />
     ) : estado === 'mal' ? (
       <IconoCruz />
     ) : (
@@ -221,16 +232,24 @@ export function CeldaVeredicto({
         justifyContent: 'center',
         cursor: 'help',
       }}
-      fondo={estado === 'mal' ? '#d4412d' : estado === 'ok' ? '#25a54f' : '#4a5568'}
+      fondo={
+        estado === 'mal'
+          ? '#d4412d'
+          : estado === 'ok'
+            ? '#25a54f'
+            : estado === 'ok-aviso'
+              ? '#c99c3d'
+              : '#4a5568'
+      }
     >
       {contenido}
     </Tooltip>
   );
 }
 
-function IconoTilde() {
+function IconoTilde({ color }: { color: string }) {
   return (
-    <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="var(--ok)" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M20 6 9 17l-5-5" />
     </svg>
   );
@@ -257,8 +276,8 @@ export function EncabezadoVeredictos() {
   return (
     <>
       <span style={cel} title="¿El código existe en el catálogo del sistema?">ART.</span>
-      <span style={cel} title="¿El precio coincide con la orden de compra?">$</span>
-      <span style={cel} title="¿La cantidad coincide con el saldo de la orden de compra?">STOCK</span>
+      <span style={cel} title="¿Hay orden de compra imputada? Verde: el precio coincide exacto. Amarillo: difiere.">$</span>
+      <span style={cel} title="¿Hay orden de compra imputada? Verde: la cantidad entra en el saldo pendiente. Amarillo: se pasa.">STOCK</span>
     </>
   );
 }
@@ -266,35 +285,44 @@ export function EncabezadoVeredictos() {
 // --- Iconos por artículo -----------------------------------------------------
 
 
-export type EstadoMatch = 'procesando' | 'match' | 'sin-match' | 'sin-verificar' | 'sin-oc';
+export type EstadoMatch =
+  | 'procesando'
+  | 'match'
+  | 'aviso'
+  | 'sin-match'
+  | 'sin-verificar'
+  | 'sin-oc';
 
 /**
- * Semáforo. Tres colores, cuatro significados:
+ * Semáforo de las columnas $ y STOCK.
  *
- *   amarillo → todavía no hay veredicto (sin verificar, o verificándose ahora)
- *   verde    → coincide con la orden de compra
- *   rojo     → NO coincide, o NO HAY orden de compra contra la que comparar
+ * ── La FORMA dice si hay orden; el COLOR, si los valores dan ────────────────
+ * Son dos preguntas distintas y antes se mezclaban en una sola escala de color.
+ * Ahora cada una tiene su canal:
  *
- * `procesando` y `sin-verificar` comparten el amarillo a propósito: para el
- * operador son el mismo hecho ("todavía no sé"). Lo que los distingue no es el
- * color sino el spinner, que responde a otra pregunta — "¿tengo que esperar o
- * tengo que hacer algo?".
+ *   FORMA  tilde → el artículo quedó imputado a una línea de orden de compra.
+ *          cruz  → no quedó imputado a ninguna, o el proveedor no tiene ninguna
+ *                  orden pendiente. La mercadería entra sin respaldo de una orden.
  *
- * ── `sin-oc` va en ROJO y no en amarillo ────────────────────────────────────
- * "El proveedor no tiene ninguna orden de compra pendiente" es un VEREDICTO, no
- * una falta de veredicto: la consulta se hizo y la respuesta es que no hay nada
- * contra lo que comparar. La mercadería entra sin respaldo de una orden, que es
- * exactamente lo que el rojo tiene que comunicar.
+ *   COLOR  verde    → el valor da (precio exacto, o cantidad dentro del saldo).
+ *          amarillo → el valor NO da, pero la orden existe y está imputada.
  *
- * El amarillo queda reservado para "todavía no sé", que es la única cosa sobre la
- * que el operador no puede decidir nada. Un rojo que no significa nada hace que
- * desconfíe de los rojos que sí importan — y al revés, un amarillo para algo ya
- * resuelto lo entrena a esperar algo que no va a pasar.
+ * Por qué separarlas: "no hay orden" y "hay orden y el precio difiere" piden
+ * acciones distintas y antes se veían iguales (los dos rojos). Con la forma fija,
+ * el operador barre la columna buscando cruces —lo único que entra sin respaldo—
+ * y usa el color para priorizar entre los que sí tienen orden.
+ *
+ *   amarillo también → todavía no hay veredicto (`procesando`, `sin-verificar`)
+ *
+ * Comparten el amarillo con `aviso` y no se confunden porque la forma los separa:
+ * un spinner y una raya no son un tilde. Y lo que el amarillo comunica es lo mismo
+ * en los tres casos: "esto no está confirmado".
  */
 const PALETA: Record<EstadoMatch, { color: string; fondo: string; fondoTooltip: string; borde: string }> = {
   procesando: { color: 'var(--warn)', fondo: '#fdf8ec', fondoTooltip: '#c99c3d', borde: '#f3dca6' },
   'sin-verificar': { color: 'var(--warn)', fondo: '#fdf8ec', fondoTooltip: '#c99c3d', borde: '#f3dca6' },
   match: { color: 'var(--ok)', fondo: '#eefaf2', fondoTooltip: '#25a54f', borde: '#bfe6ce' },
+  aviso: { color: 'var(--warn)', fondo: '#fdf8ec', fondoTooltip: '#c99c3d', borde: '#f3dca6' },
   'sin-match': { color: 'var(--err)', fondo: 'var(--err-weak)', fondoTooltip: '#d4412d', borde: '#f0c6c6' },
   'sin-oc': { color: 'var(--err)', fondo: 'var(--err-weak)', fondoTooltip: '#d4412d', borde: '#f0c6c6' },
 };
@@ -308,34 +336,32 @@ const PALETA: Record<EstadoMatch, { color: string; fondo: string; fondoTooltip: 
 const TOOLTIPS: Record<'precio' | 'stock', Record<EstadoMatch, string>> = {
   precio: {
     procesando: 'Precio: verificando contra la orden de compra…',
-    match: 'Precio: coincide con la orden de compra',
-    // Ya NO dice "(o el artículo no figura en ella)". Los dos casos se
-    // distinguen abajo con el detalle de la línea: si no se imputó a ninguna, el
-    // texto lo dice explícitamente. Meter las dos hipótesis en una sola frase
-    // obligaba al operador a adivinar cuál de las dos era la suya.
-    'sin-match': 'Precio: NO coincide con la orden de compra',
+    match: 'Precio: coincide EXACTO con el de la orden de compra.',
+    // Amarillo y no rojo: la orden existe y el artículo está imputado, así que el
+    // dato es revisable contra algo concreto. No se dice para qué lado cae la
+    // diferencia porque los dos números van abajo y se ven solos.
+    aviso: 'Precio: DISTINTO al de la orden de compra.',
+    // Ya NO dice "no coincide". Con la forma separada del color, la cruz
+    // significa una sola cosa: no hay línea de orden contra la que comparar.
+    'sin-match':
+      'Precio: NO se pudo comparar. El artículo no quedó imputado a ninguna orden de compra.',
     'sin-verificar': 'Precio: pendiente de verificar. Se controla al cargar la factura.',
     'sin-oc': 'NO HAY orden de compra pendiente de este proveedor. No hay precio contra el que comparar: la mercadería entra sin respaldo de una orden.',
   },
   stock: {
     procesando: 'Cantidad: verificando contra la orden de compra…',
-    match: 'Cantidad: coincide con el saldo pendiente de la orden de compra',
-    'sin-match': 'Cantidad: NO coincide con el saldo pendiente de la orden de compra',
+    // Cubre el IGUAL y el MENOR, que es el criterio: lo que entra no puede
+    // pasarse de lo que la orden todavía espera. Una entrega parcial es correcta
+    // y el saldo restante sigue vivo en la orden.
+    match: 'Cantidad: entra en el saldo pendiente de la orden de compra.',
+    aviso:
+      'Cantidad: MAYOR al saldo pendiente de la orden de compra. Llegó más de lo que la orden esperaba.',
+    'sin-match':
+      'Cantidad: NO se pudo comparar. El artículo no quedó imputado a ninguna orden de compra.',
     'sin-verificar': 'Cantidad: pendiente de verificar. Se controla al cargar la factura.',
     'sin-oc': 'NO HAY orden de compra pendiente de este proveedor. No hay cantidad contra la que comparar: la mercadería entra sin respaldo de una orden.',
   },
 };
-
-/**
- * Texto del caso "entró menos de lo que la orden esperaba".
- *
- * Fuera de `TOOLTIPS` porque no es un estado más del semáforo: es el veredicto
- * `match` con el motivo explicitado. Sin la frase, un tilde verde sobre dos
- * números distintos se lee como un bug del sistema.
- */
-const TOOLTIP_CANTIDAD_MENOR =
-  'Cantidad: MENOR al saldo pendiente de la orden de compra. Está bien: entró menos de lo ' +
-  'pedido y el resto sigue pendiente.';
 
 /**
  * Datos de la línea de OC contra la que se comparó el artículo, tal como estaban
@@ -383,39 +409,139 @@ function fechaCortaIso(iso: string | null): string | null {
 const TOLERANCIA_CANTIDAD = 0.001;
 
 /**
- * ¿La cantidad del remito es MENOR al saldo pendiente de la orden de compra?
+ * ¿La cantidad del remito ENTRA en el saldo pendiente de la orden de compra?
  *
- * ── Por qué esto no es un error ─────────────────────────────────────────────
- * El back compara por igualdad: cualquier diferencia contra el saldo de la línea
- * de OC deja `stockMatch: false`, y el semáforo lo pintaba rojo. Pero las dos
- * diferencias no son el mismo hecho para el que mira la pantalla:
+ * Menor o IGUAL. Es el criterio del color de la columna STOCK: lo que entra no
+ * puede pasarse de lo que la orden todavía espera.
  *
- *   remito > OC  → llegó MÁS de lo que la orden esperaba. Hay que reclamar.
- *   remito < OC  → llegó MENOS: entrega parcial. Está bien, el resto sigue
- *                  pendiente en la orden.
+ * ── Por qué no alcanza el flag del back ─────────────────────────────────────
+ * `stockMatch` compara por igualdad exacta, así que la entrega parcial —el caso
+ * NORMAL, no la excepción— llega como `false`, igual que un exceso de mercadería.
+ * Los dos hechos piden cosas distintas:
  *
- * La entrega parcial es el caso NORMAL, no la excepción. Pintarla de rojo
- * obligaba a abrir el tooltip de cada cruz para descubrir que la mayoría no pide
- * ninguna acción — y con eso las cruces que sí importan se dejan de mirar.
+ *   remito ≤ saldo OC  → entrega completa o parcial. Correcto: el resto sigue
+ *                        pendiente en la orden. VERDE.
+ *   remito > saldo OC  → llegó más de lo que la orden esperaba. AMARILLO.
  *
  * Se decide en el front a propósito: el flag del back es el hecho crudo
  * ("coincide o no") y se sigue persistiendo igual; esto es cómo se LEE ese hecho.
  *
- * Requiere `stockMatch === false` y el saldo de la OC: sin veredicto no hay nada
- * que reinterpretar, y sin el valor contra el que se comparó no se puede saber de
- * qué lado cae la diferencia.
+ * `stockMatch === true` corta antes de mirar los números: si el back ya dijo que
+ * coincide, el saldo persistido puede faltar y el veredicto no cambia.
+ *
+ * Sin `ocCantidad` devuelve `false`: no se puede afirmar que entra en un saldo
+ * que no se conoce, y el amarillo es justamente "no confirmado".
  */
-export function cantidadPorDebajoDeOc(it: {
+export function cantidadDentroDelSaldoOc(it: {
   stockMatch?: boolean | null;
   ocCantidad?: number | null;
   cantidad?: number | string | null;
 }): boolean {
-  if (it.stockMatch !== false) return false;
+  if (it.stockMatch === true) return true;
   if (it.ocCantidad == null) return false;
   const oc = round3(toNumero(it.ocCantidad));
   const remito = round3(toNumero(it.cantidad));
   if (oc <= 0 || remito <= 0) return false;
-  return oc - remito > TOLERANCIA_CANTIDAD;
+  return remito - oc <= TOLERANCIA_CANTIDAD;
+}
+
+/** Lo que las dos columnas de OC necesitan saber de un artículo. */
+export interface ArticuloOc {
+  precioMatch?: boolean | null;
+  stockMatch?: boolean | null;
+  OCNumero?: string | null;
+  OCLinea?: string | null;
+  ocCantidad?: number | null;
+  ocPrecioUnitario?: number | null;
+  cantidad: number | string;
+  precio_unitario: number;
+}
+
+/** Lo que necesitan saber del remito. */
+export interface RemitoOc {
+  ocLineasProveedor?: number | null;
+  ocNumeros?: string[] | null;
+  ocVerificadaEn?: string | null;
+}
+
+/**
+ * ÚNICO lugar que decide el estado de las columnas $ y STOCK.
+ *
+ * El orden de las preguntas es el que hace que el semáforo no mienta:
+ *
+ *   1. ¿Se está verificando ahora? → spinner. Un veredicto de la corrida
+ *      anterior mostrado como si fuera de esta es peor que no mostrar nada.
+ *   2. ¿El proveedor tiene alguna orden pendiente? Si no, CRUZ: la consulta se
+ *      hizo y la respuesta es que no hay nada contra lo que comparar.
+ *   3. ¿Hay veredicto? Si el flag es `null` nadie comparó: raya, no cruz. Avisar
+ *      de un problema que nadie comprobó entrena a ignorar el aviso.
+ *   4. ¿Quedó imputado a una línea? Si no, CRUZ: hay órdenes pero este artículo
+ *      no entró en ninguna.
+ *   5. Recién acá el COLOR: el valor da (verde) o no da (amarillo).
+ *
+ * El paso 3 va ANTES del 4 a propósito: `OCNumero == null` en un artículo sin
+ * verificar no significa "no se imputó", significa que todavía no se intentó.
+ */
+export function estadoMatchOc(
+  campo: 'precio' | 'stock',
+  it: ArticuloOc,
+  r: RemitoOc,
+  validando: boolean,
+): EstadoMatch {
+  if (validando) return 'procesando';
+  if (r.ocLineasProveedor === 0) return 'sin-oc';
+
+  const flag = campo === 'precio' ? it.precioMatch : it.stockMatch;
+  if (flag == null) return 'sin-verificar';
+  if (it.OCNumero == null) return 'sin-match';
+
+  const da = campo === 'precio' ? it.precioMatch === true : cantidadDentroDelSaldoOc(it);
+  return da ? 'match' : 'aviso';
+}
+
+/** Traduce el estado del semáforo a lo que dibuja `CeldaVeredicto`. */
+export function veredictoOc(
+  campo: 'precio' | 'stock',
+  it: ArticuloOc,
+  r: RemitoOc,
+  validando: boolean,
+): EstadoVeredicto {
+  switch (estadoMatchOc(campo, it, r, validando)) {
+    case 'procesando':
+      return 'cargando';
+    case 'match':
+      return 'ok';
+    case 'aviso':
+      return 'ok-aviso';
+    case 'sin-match':
+    case 'sin-oc':
+      return 'mal';
+    default:
+      return 'sin-dato';
+  }
+}
+
+/**
+ * Los números de OC que figuran en los artículos detectados, sin repetir y en el
+ * orden en que aparecen.
+ *
+ * ── Por qué no `remito.ocNumeros` ───────────────────────────────────────────
+ * Ese campo son las órdenes que se MIRARON para armar el cruce, que es la
+ * pregunta de trazabilidad del proceso. Arriba de la card se responde otra: contra
+ * qué órdenes quedó imputado ESTE remito. Mostrar las miradas listaba órdenes con
+ * las que ningún renglón terminó relacionado, y el operador las buscaba en el ERP
+ * para no encontrar nada.
+ */
+export function ocsPresentesEnArticulos(items: { OCNumero?: string | null }[]): string[] {
+  const vistas = new Set<string>();
+  const out: string[] = [];
+  for (const it of items) {
+    const n = it.OCNumero;
+    if (n == null || vistas.has(n)) continue;
+    vistas.add(n);
+    out.push(n);
+  }
+  return out;
 }
 
 /**
@@ -442,36 +568,13 @@ export function cantidadPorDebajoDeOc(it: {
  */
 export function textoVeredictoOc(
   campo: 'precio' | 'stock',
-  it: {
-    precioMatch?: boolean | null;
-    stockMatch?: boolean | null;
-    OCNumero?: string | null;
-    OCLinea?: string | null;
-    ocCantidad?: number | null;
-    ocPrecioUnitario?: number | null;
-    cantidad: number | string;
-    precio_unitario: number;
-  },
-  r: {
-    ocLineasProveedor?: number | null;
-    ocNumeros?: string[] | null;
-    ocVerificadaEn?: string | null;
-  },
+  it: ArticuloOc,
+  r: RemitoOc,
   validando: boolean,
 ): string {
-  if (validando) {
-    return campo === 'precio'
-      ? 'Precio: verificando contra la orden de compra…'
-      : 'Cantidad: verificando contra la orden de compra…';
-  }
-  const flag = campo === 'precio' ? it.precioMatch : it.stockMatch;
-  // Una cantidad por debajo del saldo de la OC es un `stockMatch: false` que se
-  // LEE como correcto. Ver `cantidadPorDebajoDeOc`.
-  const menorQueOc = campo === 'stock' && cantidadPorDebajoDeOc(it);
-  const estado: EstadoMatch =
-    r.ocLineasProveedor === 0 ? 'sin-oc' : menorQueOc ? 'match' : estadoDeFlag(flag);
+  const estado = estadoMatchOc(campo, it, r, validando);
   return conEvidencia(
-    menorQueOc ? TOOLTIP_CANTIDAD_MENOR : TOOLTIPS[campo][estado],
+    TOOLTIPS[campo][estado],
     estado,
     campo,
     {
@@ -483,7 +586,11 @@ export function textoVeredictoOc(
       numerosContrastados: r.ocNumeros ?? null,
     },
     { cantidad: it.cantidad, precioUnitario: it.precio_unitario },
-    menorQueOc,
+    // El par de valores en un VERDE de cantidad: una entrega parcial es correcta
+    // y aun así los dos números difieren, y cuánto quedó pendiente es el dato que
+    // el operador necesita. En el verde de precio los números son idénticos por
+    // definición, así que repetirlos sería ruido.
+    estado === 'match' && campo === 'stock' && it.stockMatch !== true,
   );
 }
 
@@ -494,10 +601,10 @@ function conEvidencia(
   oc: LineaOcComparada,
   remito: ValoresRemito,
   /**
-   * Fuerza el par de valores aunque el veredicto sea `match`. Lo usa el caso
-   * "entró menos que el saldo de la OC": ahí los dos números NO son el mismo, así
-   * que mostrarlos no es la repetición que la regla de abajo evita — es la única
-   * forma de ver cuánto quedó pendiente sin abrir el ERP.
+   * Fuerza el par de valores aunque el veredicto sea verde. Lo pide el llamador
+   * para el verde de cantidad (entrega parcial): ahí los dos números NO son el
+   * mismo, así que mostrarlos no es la repetición que la regla de abajo evita —
+   * es la única forma de ver cuánto quedó pendiente sin abrir el ERP.
    */
   mostrarValores = false,
 ): string {
@@ -539,9 +646,9 @@ function conEvidencia(
     const linea = oc.linea != null ? ` línea ${oc.linea}` : '';
     partes.push(`Imputado a la OC ${oc.numero}${linea}.`);
 
-    // El par de valores, sólo cuando NO coincide: si coincide, repetir dos veces
-    // el mismo número es ruido.
-    if (estado === 'sin-match' || mostrarValores) {
+    // El par de valores, sólo cuando los dos números difieren: si coinciden,
+    // repetir dos veces el mismo número es ruido.
+    if (estado === 'aviso' || mostrarValores) {
       if (campo === 'precio' && oc.precioUnitario != null) {
         partes.push(
           `OC: ${money(oc.precioUnitario)} · Remito: ${money(remito.precioUnitario)}`,
@@ -563,13 +670,6 @@ function conEvidencia(
   if (fecha) partes.push(`Verificado el ${fecha}.`);
 
   return partes.join('\n');
-}
-
-/** `null`/`undefined` = sin verificar. Ver la nota de `Articulo` en types/api.ts. */
-function estadoDeFlag(flag: boolean | null | undefined): EstadoMatch {
-  if (flag === true) return 'match';
-  if (flag === false) return 'sin-match';
-  return 'sin-verificar';
 }
 
 const ANCHO_TOOLTIP = 220;
@@ -685,49 +785,35 @@ export function IconosMatch({
   cantidad: number | string;
   precioUnitario: number;
 }) {
-  // `=== 0` y no `!ocLineasProveedor`: `null`/`undefined` es "no se verificó" y
-  // tiene que seguir cayendo en el amarillo de `estadoDeFlag`. Sólo el 0 explícito
-  // es el veredicto "este proveedor no tiene órdenes".
-  const sinOc = ocLineasProveedor === 0;
-  const estadoPrecio: EstadoMatch =
-    estado === 'procesando' ? 'procesando' : sinOc ? 'sin-oc' : estadoDeFlag(precioMatch);
-  const cantidadMenor = cantidadPorDebajoDeOc({ stockMatch, ocCantidad, cantidad });
-  const estadoStock: EstadoMatch =
-    estado === 'procesando'
-      ? 'procesando'
-      : sinOc
-        ? 'sin-oc'
-        : cantidadMenor
-          ? 'match'
-          : estadoDeFlag(stockMatch);
-  const oc: LineaOcComparada = {
-    numero: ocNumero,
-    linea: ocLinea,
-    cantidad: ocCantidad,
-    precioUnitario: ocPrecioUnitario,
-    verificadaEn: ocVerificadaEn,
-    numerosContrastados: ocNumeros,
+  // Los props se reagrupan en la forma que espera `estadoMatchOc`, que es el único
+  // lugar donde vive el criterio del semáforo. Antes esto tenía su propia cadena
+  // de ternarios y podía divergir de la de las celdas sin que nada avisara.
+  const articulo: ArticuloOc = {
+    precioMatch,
+    stockMatch,
+    OCNumero: ocNumero,
+    OCLinea: ocLinea,
+    ocCantidad,
+    ocPrecioUnitario,
+    cantidad,
+    precio_unitario: precioUnitario,
   };
-  const propio: ValoresRemito = { cantidad, precioUnitario };
+  const remitoOc: RemitoOc = { ocLineasProveedor, ocNumeros, ocVerificadaEn };
+  const validando = estado === 'procesando';
+  const estadoPrecio = estadoMatchOc('precio', articulo, remitoOc, validando);
+  const estadoStock = estadoMatchOc('stock', articulo, remitoOc, validando);
 
   return (
     <span style={{ display: 'inline-flex', gap: 6, flex: 'none' }}>
       <IconoConTooltip
         estado={estadoPrecio}
-        texto={conEvidencia(TOOLTIPS.precio[estadoPrecio], estadoPrecio, 'precio', oc, propio)}
+        texto={textoVeredictoOc('precio', articulo, remitoOc, validando)}
       >
         <IconoPrecio />
       </IconoConTooltip>
       <IconoConTooltip
         estado={estadoStock}
-        texto={conEvidencia(
-          cantidadMenor ? TOOLTIP_CANTIDAD_MENOR : TOOLTIPS.stock[estadoStock],
-          estadoStock,
-          'stock',
-          oc,
-          propio,
-          cantidadMenor,
-        )}
+        texto={textoVeredictoOc('stock', articulo, remitoOc, validando)}
       >
         <IconoStock />
       </IconoConTooltip>
@@ -748,27 +834,50 @@ export function IconosMatch({
  *
  * No se muestra si nunca se verificó (`null`): un badge vacío afirma que se
  * contrastó contra nada, que es distinto de no haber contrastado.
+ *
+ * ── `ocNumeros` son las de los ARTÍCULOS, no las contrastadas ───────────────
+ * Lista sólo las órdenes que figuran en algún renglón detectado (ver
+ * `ocsPresentesEnArticulos`). Antes mostraba todas las que se habían mirado para
+ * armar el cruce, así que aparecían órdenes con las que ningún artículo terminó
+ * relacionado: el operador las buscaba en el ERP y no encontraba nada de este
+ * remito ahí.
+ *
+ * `ocProveedor` es la lista completa de las miradas y se usa SÓLO para redactar
+ * el caso vacío. Sin ese dato, "ningún artículo quedó imputado" y "el proveedor
+ * no tenía ninguna orden" se dirían igual, y son cosas distintas: en el primero
+ * hay órdenes para revisar a mano, en el segundo no hay nada que revisar.
  */
 export function BadgeOcContrastada({
   ocNumeros,
+  ocProveedor = null,
   ocVerificadaEn,
 }: {
+  /** Órdenes que figuran en los artículos detectados. */
   ocNumeros?: string[] | null;
+  /** Órdenes que se MIRARON. Sólo para distinguir los dos casos vacíos. */
+  ocProveedor?: string[] | null;
   ocVerificadaEn?: string | null;
 }) {
   if (ocNumeros == null) return null;
 
   const fecha = fechaCortaIso(ocVerificadaEn ?? null);
   const hay = ocNumeros.length > 0;
+  // Vacío con órdenes del proveedor = ninguna imputada. Vacío sin órdenes = el
+  // proveedor no tenía ninguna.
+  const sinImputar = !hay && !!ocProveedor?.length;
 
   return (
     <Tooltip
       texto={
         (hay
-          ? `Los semáforos de precio y cantidad de este remito se compararon contra la orden ` +
-            `de compra ${ocNumeros.join(', ')} del proveedor.`
-          : 'La consulta se hizo y el proveedor NO tenía ninguna orden de compra pendiente con ' +
-            'líneas comparables. La mercadería entra sin respaldo de una orden.') +
+          ? `Los artículos de este remito quedaron imputados a la orden de compra ` +
+            `${ocNumeros.join(', ')} del proveedor.`
+          : sinImputar
+            ? `Ningún artículo de este remito quedó imputado a una línea de orden de compra. ` +
+              `Se miraron las órdenes ${ocProveedor.join(', ')}: o los códigos no figuran ahí, ` +
+              'o las líneas ya las tomaron otros remitos.'
+            : 'La consulta se hizo y el proveedor NO tenía ninguna orden de compra pendiente con ' +
+              'líneas comparables. La mercadería entra sin respaldo de una orden.') +
         (fecha
           ? `\nVerificado el ${fecha}. Los valores del tooltip de cada renglón son los que ` +
             'tenía la orden en ese momento, no los de ahora.'
@@ -798,7 +907,7 @@ export function BadgeOcContrastada({
       fondo="#3c4655"
     >
       <IconoDocumento />
-      {hay ? `OC ${ocNumeros.join(', ')}` : 'Sin OC del proveedor'}
+      {hay ? `OC ${ocNumeros.join(', ')}` : sinImputar ? 'Sin OC imputada' : 'Sin OC del proveedor'}
     </Tooltip>
   );
 }
