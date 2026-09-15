@@ -19,8 +19,8 @@ import {
   BadgeOcContrastada,
   BadgeOrdenCompra,
   CeldaVeredicto,
+  cantidadPorDebajoDeOc,
   EncabezadoVeredictos,
-  precioPorDebajoDeOc,
   textoVeredictoOc,
   type EstadoVeredicto,
 } from '../components/OrdenCompra';
@@ -882,18 +882,19 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                             }
                           />
                           <CeldaVeredicto
-                            /*
-                              El flag del back es igualdad exacta: facturar MÁS y
-                              facturar MENOS que la OC llegan los dos como
-                              `precioMatch: false`. Sólo el primero es un problema,
-                              así que el segundo se muestra en verde (ver
-                              `precioPorDebajoDeOc`). El dato crudo no se toca.
-                            */
-                            estado={veredicto(precioPorDebajoDeOc(it) ? true : it.precioMatch, true)}
+                            estado={veredicto(it.precioMatch, true)}
                             texto={textoVeredictoOc('precio', it, r, validando)}
                           />
                           <CeldaVeredicto
-                            estado={veredicto(it.stockMatch, true)}
+                            /*
+                              El flag del back es igualdad exacta contra el saldo
+                              pendiente: que llegue MÁS y que llegue MENOS de lo
+                              esperado vienen los dos como `stockMatch: false`.
+                              Sólo el primero es un problema; el segundo es una
+                              entrega parcial y va en verde (ver
+                              `cantidadPorDebajoDeOc`). El dato crudo no se toca.
+                            */
+                            estado={veredicto(cantidadPorDebajoDeOc(it) ? true : it.stockMatch, true)}
                             texto={textoVeredictoOc('stock', it, r, validando)}
                           />
                           {/*
