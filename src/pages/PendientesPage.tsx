@@ -20,6 +20,7 @@ import {
   BadgeOrdenCompra,
   CeldaVeredicto,
   EncabezadoVeredictos,
+  precioPorDebajoDeOc,
   textoVeredictoOc,
   type EstadoVeredicto,
 } from '../components/OrdenCompra';
@@ -881,7 +882,14 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                             }
                           />
                           <CeldaVeredicto
-                            estado={veredicto(it.precioMatch, true)}
+                            /*
+                              El flag del back es igualdad exacta: facturar MÁS y
+                              facturar MENOS que la OC llegan los dos como
+                              `precioMatch: false`. Sólo el primero es un problema,
+                              así que el segundo se muestra en verde (ver
+                              `precioPorDebajoDeOc`). El dato crudo no se toca.
+                            */
+                            estado={veredicto(precioPorDebajoDeOc(it) ? true : it.precioMatch, true)}
                             texto={textoVeredictoOc('precio', it, r, validando)}
                           />
                           <CeldaVeredicto
