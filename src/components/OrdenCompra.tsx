@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import type { EstadoOrdenCompra } from '../hooks/useOrdenCompra';
 import { Tooltip } from './Tooltip';
 import { money, fmtCantidad } from '../utils/money';
-import { round2, toNumero } from '../utils/numero';
+import { round3, toNumero } from '../utils/numero';
 
 /**
  * Indicadores del cruce contra la orden de compra del proveedor.
@@ -327,14 +327,15 @@ const TOOLTIPS: Record<'precio' | 'stock', Record<EstadoMatch, string>> = {
 };
 
 /**
- * Texto del caso "el remito está por debajo de la OC".
+ * Texto del caso "entró menos de lo que la orden esperaba".
  *
  * Fuera de `TOOLTIPS` porque no es un estado más del semáforo: es el veredicto
  * `match` con el motivo explicitado. Sin la frase, un tilde verde sobre dos
  * números distintos se lee como un bug del sistema.
  */
-const TOOLTIP_PRECIO_MENOR =
-  'Precio: MENOR al de la orden de compra. Está bien: nos facturaron por debajo de lo pedido.';
+const TOOLTIP_CANTIDAD_MENOR =
+  'Cantidad: MENOR al saldo pendiente de la orden de compra. Está bien: entró menos de lo ' +
+  'pedido y el resto sigue pendiente.';
 
 /**
  * Datos de la línea de OC contra la que se comparó el artículo, tal como estaban
@@ -373,42 +374,48 @@ function fechaCortaIso(iso: string | null): string | null {
   return a && m && d ? `${d}/${m}/${a}` : null;
 }
 
-/** Diferencia por debajo de la cual dos precios se consideran el mismo. */
-const TOLERANCIA_PRECIO = 0.01;
+/**
+ * Diferencia por debajo de la cual dos cantidades se consideran la misma.
+ *
+ * `round3` y no `round2`: hay unidades que se facturan con tres decimales (kg,
+ * litros), y redondear a dos convertía un saldo de 0,125 en 0,13.
+ */
+const TOLERANCIA_CANTIDAD = 0.001;
 
 /**
- * ¿El precio del remito es MENOR al de la orden de compra?
+ * ¿La cantidad del remito es MENOR al saldo pendiente de la orden de compra?
  *
  * ── Por qué esto no es un error ─────────────────────────────────────────────
- * El back compara por igualdad: cualquier diferencia contra el precio de la
- * línea de OC deja `precioMatch: false`, y el semáforo lo pintaba rojo. Pero las
- * dos diferencias no son el mismo hecho para el que mira la pantalla:
+ * El back compara por igualdad: cualquier diferencia contra el saldo de la línea
+ * de OC deja `stockMatch: false`, y el semáforo lo pintaba rojo. Pero las dos
+ * diferencias no son el mismo hecho para el que mira la pantalla:
  *
- *   remito > OC  → nos facturaron MÁS de lo pedido. Hay que reclamar.
- *   remito < OC  → nos facturaron MENOS (bonificación, baja de lista). Está bien.
+ *   remito > OC  → llegó MÁS de lo que la orden esperaba. Hay que reclamar.
+ *   remito < OC  → llegó MENOS: entrega parcial. Está bien, el resto sigue
+ *                  pendiente en la orden.
  *
- * Pintar los dos de rojo obliga a abrir el tooltip de cada cruz para descubrir
- * que la mitad no pide ninguna acción — y con eso las cruces que sí importan se
- * dejan de mirar.
+ * La entrega parcial es el caso NORMAL, no la excepción. Pintarla de rojo
+ * obligaba a abrir el tooltip de cada cruz para descubrir que la mayoría no pide
+ * ninguna acción — y con eso las cruces que sí importan se dejan de mirar.
  *
  * Se decide en el front a propósito: el flag del back es el hecho crudo
  * ("coincide o no") y se sigue persistiendo igual; esto es cómo se LEE ese hecho.
  *
- * Requiere `precioMatch === false` y el precio de la OC: sin veredicto no hay
- * nada que reinterpretar, y sin el valor contra el que se comparó no se puede
- * saber de qué lado cae la diferencia.
+ * Requiere `stockMatch === false` y el saldo de la OC: sin veredicto no hay nada
+ * que reinterpretar, y sin el valor contra el que se comparó no se puede saber de
+ * qué lado cae la diferencia.
  */
-export function precioPorDebajoDeOc(it: {
-  precioMatch?: boolean | null;
-  ocPrecioUnitario?: number | null;
-  precio_unitario?: number | string | null;
+export function cantidadPorDebajoDeOc(it: {
+  stockMatch?: boolean | null;
+  ocCantidad?: number | null;
+  cantidad?: number | string | null;
 }): boolean {
-  if (it.precioMatch !== false) return false;
-  if (it.ocPrecioUnitario == null) return false;
-  const oc = round2(toNumero(it.ocPrecioUnitario));
-  const remito = round2(toNumero(it.precio_unitario));
+  if (it.stockMatch !== false) return false;
+  if (it.ocCantidad == null) return false;
+  const oc = round3(toNumero(it.ocCantidad));
+  const remito = round3(toNumero(it.cantidad));
   if (oc <= 0 || remito <= 0) return false;
-  return oc - remito > TOLERANCIA_PRECIO;
+  return oc - remito > TOLERANCIA_CANTIDAD;
 }
 
 /**
@@ -458,13 +465,13 @@ export function textoVeredictoOc(
       : 'Cantidad: verificando contra la orden de compra…';
   }
   const flag = campo === 'precio' ? it.precioMatch : it.stockMatch;
-  // Un precio por debajo del de la OC es un `precioMatch: false` que se LEE como
-  // correcto. Ver `precioPorDebajoDeOc`.
-  const menorQueOc = campo === 'precio' && precioPorDebajoDeOc(it);
+  // Una cantidad por debajo del saldo de la OC es un `stockMatch: false` que se
+  // LEE como correcto. Ver `cantidadPorDebajoDeOc`.
+  const menorQueOc = campo === 'stock' && cantidadPorDebajoDeOc(it);
   const estado: EstadoMatch =
     r.ocLineasProveedor === 0 ? 'sin-oc' : menorQueOc ? 'match' : estadoDeFlag(flag);
   return conEvidencia(
-    menorQueOc ? TOOLTIP_PRECIO_MENOR : TOOLTIPS[campo][estado],
+    menorQueOc ? TOOLTIP_CANTIDAD_MENOR : TOOLTIPS[campo][estado],
     estado,
     campo,
     {
@@ -488,9 +495,9 @@ function conEvidencia(
   remito: ValoresRemito,
   /**
    * Fuerza el par de valores aunque el veredicto sea `match`. Lo usa el caso
-   * "más barato que la OC": ahí los dos números NO son el mismo, así que
-   * mostrarlos no es la repetición que la regla de abajo evita — es la única
-   * forma de ver cuánto se ahorró sin abrir el ERP.
+   * "entró menos que el saldo de la OC": ahí los dos números NO son el mismo, así
+   * que mostrarlos no es la repetición que la regla de abajo evita — es la única
+   * forma de ver cuánto quedó pendiente sin abrir el ERP.
    */
   mostrarValores = false,
 ): string {
@@ -682,17 +689,17 @@ export function IconosMatch({
   // tiene que seguir cayendo en el amarillo de `estadoDeFlag`. Sólo el 0 explícito
   // es el veredicto "este proveedor no tiene órdenes".
   const sinOc = ocLineasProveedor === 0;
-  const precioMenor = precioPorDebajoDeOc({ precioMatch, ocPrecioUnitario, precio_unitario: precioUnitario });
   const estadoPrecio: EstadoMatch =
+    estado === 'procesando' ? 'procesando' : sinOc ? 'sin-oc' : estadoDeFlag(precioMatch);
+  const cantidadMenor = cantidadPorDebajoDeOc({ stockMatch, ocCantidad, cantidad });
+  const estadoStock: EstadoMatch =
     estado === 'procesando'
       ? 'procesando'
       : sinOc
         ? 'sin-oc'
-        : precioMenor
+        : cantidadMenor
           ? 'match'
-          : estadoDeFlag(precioMatch);
-  const estadoStock: EstadoMatch =
-    estado === 'procesando' ? 'procesando' : sinOc ? 'sin-oc' : estadoDeFlag(stockMatch);
+          : estadoDeFlag(stockMatch);
   const oc: LineaOcComparada = {
     numero: ocNumero,
     linea: ocLinea,
@@ -707,20 +714,20 @@ export function IconosMatch({
     <span style={{ display: 'inline-flex', gap: 6, flex: 'none' }}>
       <IconoConTooltip
         estado={estadoPrecio}
-        texto={conEvidencia(
-          precioMenor ? TOOLTIP_PRECIO_MENOR : TOOLTIPS.precio[estadoPrecio],
-          estadoPrecio,
-          'precio',
-          oc,
-          propio,
-          precioMenor,
-        )}
+        texto={conEvidencia(TOOLTIPS.precio[estadoPrecio], estadoPrecio, 'precio', oc, propio)}
       >
         <IconoPrecio />
       </IconoConTooltip>
       <IconoConTooltip
         estado={estadoStock}
-        texto={conEvidencia(TOOLTIPS.stock[estadoStock], estadoStock, 'stock', oc, propio)}
+        texto={conEvidencia(
+          cantidadMenor ? TOOLTIP_CANTIDAD_MENOR : TOOLTIPS.stock[estadoStock],
+          estadoStock,
+          'stock',
+          oc,
+          propio,
+          cantidadMenor,
+        )}
       >
         <IconoStock />
       </IconoConTooltip>
