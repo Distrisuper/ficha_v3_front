@@ -19,6 +19,7 @@ import { round2, toNumero } from '../utils/numero';
 import { colorFor } from '../utils/colors';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { PanelAdvertencias } from '../components/PanelAdvertencias';
+import { ProveedorSelect } from '../components/ProveedorSelect';
 import { Tooltip } from '../components/Tooltip';
 import { formatNroComprobante, normalizarNroComprobante } from '../utils/comprobante';
 import {
@@ -677,19 +678,21 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
             </div>
             <div style={fieldColStyle}>
               <label style={labelStyle}>Proveedor</label>
-              <select
+              {/*
+                Combobox con buscador en vez del `<select>` nativo. Acá es donde
+                más pesa: el operador ya tiene el comprobante abierto y busca por
+                lo que ve en él (razón social, CUIT), que no es necesariamente el
+                alias con el que el proveedor quedó cargado en Ficha.
+              */}
+              <ProveedorSelect
                 value={proveedorId}
+                onChange={setProveedorId}
+                proveedores={proveedores}
+                placeholder="Seleccionar proveedor"
                 disabled={locked}
-                onChange={(e) => setProveedorId(e.target.value)}
-                style={{ ...selectStyle, opacity: locked ? 0.55 : 1, cursor: locked ? 'not-allowed' : 'pointer' }}
-              >
-                <option value="">Seleccionar proveedor</option>
-                {proveedores.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.nombre}
-                  </option>
-                ))}
-              </select>
+                title={locked ? 'Aprobá o rechazá el comprobante actual para cargar otro' : undefined}
+                style={{ height: 42 }}
+              />
             </div>
             <div style={{ ...fieldColStyle, minWidth: 220 }}>
               <label style={labelStyle}>Adjuntar PDF:</label>
@@ -1109,10 +1112,10 @@ export function NuevoPage({ tipoComp, onGoConfig }: Props) {
                  * cuando sí. Se actualiza en cuanto el operador corrige un
                  * importe, porque `cuadra` se recalcula del estado.
                  *
-                 * El color depende de ESE hecho y no de `hayAdvertencias`: la
-                 * regla de "importes en cero" avisa por bonificaciones en 0, que
-                 * es el caso normal, así que con `hayAdvertencias` el botón
-                 * quedaba ámbar siempre y el ámbar dejaba de significar algo.
+                 * El color depende de ESE hecho y no de `hayAdvertencias`:
+                 * cualquier aviso menor prendía `hayAdvertencias`, así que el
+                 * botón quedaba ámbar casi siempre y el ámbar dejaba de
+                 * significar algo.
                  */
                 background:
                   remitosCargados.length === 0 || approving

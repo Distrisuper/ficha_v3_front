@@ -16,7 +16,7 @@
  *   o hay un importe base en cero (cantidad, precio, total de línea, subtotal o total).
  * - `aviso`: NO bloquea. El dato es sospechoso pero cargable: formato de número raro,
  *   falta la descripción, la cantidad no es entera, los totales no cierran (descalce
- *   matemático) o IVA/percepciones/bonificaciones en cero. Se marcan en amarillo sobre
+ *   matemático) o IVA/percepciones en cero. Se marcan en amarillo sobre
  *   el propio campo y se repiten en el modal, pero el operador puede cargar igual.
  *
  * ## Advertencia dirigida a un campo
@@ -206,10 +206,15 @@ export function validarRemito(r: Remito, etiqueta?: string): Advertencia[] {
   }
 
   // ── 6. Avisos: importes en cero (posibles, pero infrecuentes) ──────────────
+  //
+  // Las BONIFICACIONES no entran: son cero en casi toda factura, así que el
+  // aviso salía siempre y no distinguía nada. Un aviso que aparece en todos los
+  // comprobantes no informa de un caso raro — enseña a ignorar el amarillo, y
+  // después el amarillo que sí importa (IVA o percepciones en cero, que son
+  // infrecuentes) tampoco se lee.
   const enCero = [
     iva === 0 && 'IVA',
     percepciones === 0 && 'percepciones',
-    descuentos === 0 && 'bonificaciones',
   ].filter(Boolean) as string[];
   if (enCero.length > 0) {
     push('aviso', 'importes-cero', `${listar(enCero)} en $ 0,00. Verificá que sea correcto.`);
@@ -227,11 +232,11 @@ export function validarRemito(r: Remito, etiqueta?: string): Advertencia[] {
  * Es la misma cuenta de la regla 5, pero expuesta como un booleano porque el
  * botón de cargar la factura necesita ESTE hecho y no "hay alguna advertencia".
  *
- * La diferencia importa: la regla 6 avisa cuando el IVA, las percepciones o las
- * bonificaciones están en cero, y las bonificaciones son cero en casi toda
- * factura. Con `hayAdvertencias` el botón quedaba ámbar SIEMPRE, así que el ámbar
- * no significaba nada — y cuando el total no cerraba, que es lo único que el
- * operador tiene que mirar antes de cargar, se veía igual que el resto.
+ * La diferencia importa: `validarRemito` devuelve avisos de todo tipo (formato
+ * del Nº, cantidades no enteras, importes en cero), y con `hayAdvertencias` el
+ * botón quedaba ámbar por cualquiera de ellos — así que el ámbar no significaba
+ * nada, y cuando el total no cerraba, que es lo único que el operador tiene que
+ * mirar antes de cargar, se veía igual que el resto.
  *
  * `true` cuando no se puede evaluar (total en cero, o sin subtotal): ahí el
  * problema es la falta del dato y lo reporta `validarRemito` como error. Devolver

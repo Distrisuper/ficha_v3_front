@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react';
 import { useData } from '../context/data-context';
 import { EMPTY_FILTERS, hayFiltrosActivos, type RemitoFilters } from '../utils/filtros';
+import { ProveedorSelect } from './ProveedorSelect';
 
 interface Props {
   value: RemitoFilters;
@@ -32,19 +33,21 @@ export function FiltersBar({ value, onChange }: Props) {
         ))}
       </select>
 
-      <select
+      {/*
+        Combobox con buscador en vez del `<select>` nativo: el catálogo de
+        proveedores crece y encontrar uno en una lista larga era scrollear a ojo.
+        Se busca también por razón social y CUIT — son los datos que el operador
+        tiene delante en el comprobante, no el alias interno.
+      */}
+      <ProveedorSelect
         value={value.proveedorId}
-        onChange={(e) => onChange({ ...value, proveedorId: e.target.value })}
-        style={selectStyle}
+        onChange={(proveedorId) => onChange({ ...value, proveedorId })}
+        proveedores={proveedores}
+        placeholder="Proveedor: Todos"
+        emptyLabel="Proveedor: Todos"
         title="Filtrar por proveedor"
-      >
-        <option value="">Proveedor: Todos</option>
-        {proveedores.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.nombre}
-          </option>
-        ))}
-      </select>
+        style={{ height: 36, width: 200 }}
+      />
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={labelStyle}>Fecha</span>
