@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
+import { useMemo, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import { useAuth } from '../context/auth-context';
 import { useData } from '../context/data-context';
 import { proveedoresApi } from '../api/proveedores';
@@ -6,6 +6,7 @@ import { sucursalesApi } from '../api/sucursales';
 import { usersApi } from '../api/users';
 import { permsFor, isAdmin } from '../utils/roles';
 import { cuitEsValido, formatCuit, soloDigitos } from '../utils/cuit';
+import { coincideBusqueda } from '../utils/texto';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import type { CreateProveedorInput, CreateSucursalInput, Proveedor, Sucursal } from '../types/api';
 
@@ -186,6 +187,13 @@ export function ConfiguracionPage() {
                 onCancel={close}
               />
             ),
+          }}
+          // Se busca por los mismos campos que muestra la fila, más el CUIT en
+          // crudo: `coincideBusqueda` ya encuentra el CUIT tipeado con o sin
+          // guiones, y acá el que figura en pantalla va enmascarado.
+          search={{
+            placeholder: 'Buscar por nombre, razón social o CUIT…',
+            campos: (p) => [p.razonSocial, p.cuit],
           }}
           subtitle={(p) => {
             const partes = [p.razonSocial, p.cuit ? formatCuit(p.cuit) : null].filter(Boolean);
@@ -381,12 +389,25 @@ type AddMode =
     }
   | { mode: 'form'; renderForm: (close: () => void) => ReactNode };
 
+/**
+ * Buscador de la sección. Ausente = la lista no se puede filtrar.
+ *
+ * `campos` dice qué se busca además del nombre, y es responsabilidad de quien
+ * usa la sección: acá no se puede saber que un proveedor también se busca por
+ * razón social y CUIT.
+ */
+interface SearchConfig<T> {
+  placeholder: string;
+  campos: (item: T) => (string | null | undefined)[];
+}
+
 interface CrudSectionProps<T extends { id: string; nombre: string }> {
   title: string;
   items: T[];
   add: AddMode;
   /** Segunda línea de la fila (ej. razón social · CUIT). null = no se muestra. */
   subtitle?: (item: T) => ReactNode;
+  search?: SearchConfig<T>;
   editKey: string | null;
   editValue: string;
   onEditValueChange: (v: string) => void;
@@ -406,6 +427,7 @@ function CrudSection<T extends { id: string; nombre: string }>({
   items,
   add,
   subtitle,
+  search,
   editKey,
   editValue,
   onEditValueChange,
@@ -422,19 +444,61 @@ function CrudSection<T extends { id: string; nombre: string }>({
   // Sólo aplica al modo form: el form arranca cerrado y se despliega al tocar
   // "Agregar".
   const [addOpen, setAddOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const canSubmitAdd = add.mode === 'inline' && !busy && add.draft.trim().length > 0;
   const canSubmitEdit = !busy && editValue.trim().length > 0;
+
+  /**
+   * Lo que se ve en la lista. Sin `search` es la lista entera, así que las
+   * secciones que no configuran buscador no pagan nada.
+   *
+   * El filtro es en memoria: el catálogo ya está todo cargado en el
+   * DataContext, así que pedirlo al servidor agregaría una request por tecla
+   * para filtrar algo que la pantalla ya tiene.
+   */
+  const visibles = useMemo(
+    () => (search ? items.filter((it) => coincideBusqueda(query, it.nombre, ...search.campos(it))) : items),
+    [items, query, search],
+  );
+  const filtrando = search != null && query.trim() !== '';
+
   return (
     <section style={{ flex: 1, minWidth: 400, background: '#fff', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
       <div style={{ padding: '16px 20px', borderBottom: '1px solid #eef1f6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--navy)' }}>{title}</div>
         <span style={{ background: 'var(--blue-weak)', color: 'var(--blue)', fontSize: 12, fontWeight: 800, borderRadius: 999, minWidth: 24, height: 24, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0 8px' }}>
-          {items.length}
+          {/* Con el filtro puesto, "12" a secas haría creer que el catálogo
+              tiene 12: se muestran los dos números. */}
+          {filtrando ? `${visibles.length} de ${items.length}` : items.length}
         </span>
       </div>
+      {search && (
+        <div style={{ padding: '10px 20px', borderBottom: '1px solid #f4f6fa', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ flex: 'none', color: 'var(--muted-3)' }}>
+            <circle cx="11" cy="11" r="7" />
+            <path d="M21 21l-4.3-4.3" />
+          </svg>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={search.placeholder}
+            style={{ flex: 1, height: 34, border: '1px solid var(--border-2)', borderRadius: 8, padding: '0 11px', fontSize: 13, color: 'var(--ink)', outline: 'none' }}
+          />
+          {filtrando && (
+            <button onClick={() => setQuery('')} title="Limpiar la búsqueda" style={{ ...cancelBtn, height: 34, padding: '0 10px' }}>
+              Limpiar
+            </button>
+          )}
+        </div>
+      )}
       <div className="ds-scroll" style={{ display: 'flex', flexDirection: 'column', height: 230, overflowY: 'auto' }}>
         {items.length === 0 && <div style={{ padding: '16px 20px', fontSize: 13, color: 'var(--muted-3)' }}>Sin registros.</div>}
-        {items.map((it) => {
+        {items.length > 0 && visibles.length === 0 && (
+          <div style={{ padding: '16px 20px', fontSize: 13, color: 'var(--muted-3)' }}>
+            Ningún resultado para “{query.trim()}”.
+          </div>
+        )}
+        {visibles.map((it) => {
           const key = `${listKey}:${it.id}`;
           const editing = editKey === key;
           const sub = subtitle?.(it);

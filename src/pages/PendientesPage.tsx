@@ -483,10 +483,10 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
            * Errores del comprobante (bloquean la confirmación en el modal).
            *
            * Ya NO se usa el total de advertencias para el color del botón: eso
-           * incluía los avisos de "importes en cero", que son el caso normal, y
-           * dejaba el botón ámbar en casi toda factura. Ahora el ámbar de la
-           * factura sale de `cuadra` y el del remito de `matchRemito`, que son los
-           * dos hechos sobre los que el operador puede decidir algo.
+           * incluía avisos menores que no cambian ninguna decisión y dejaba el
+           * botón ámbar en casi toda factura. Ahora el ámbar de la factura sale
+           * de `cuadra` y el del remito de `matchRemito`, que son los dos hechos
+           * sobre los que el operador puede decidir algo.
            */
           const advCard = advertenciasPorRemito[r.id] ?? [];
           const erroresCard = soloErrores(advCard);
@@ -1065,10 +1065,9 @@ export function PendientesPage({ filters, focusId, onFocusHandled }: Props) {
                             ? '#8a94a6'
                             : esFacturaACargar
                               // FACTURA: ámbar sólo si la aritmética no cierra.
-                              // Antes dependía de `hayAdvertenciasCard`, que es
-                              // true en casi toda factura (avisa por
-                              // bonificaciones en 0), así que el ámbar no
-                              // distinguía nada.
+                              // Antes dependía de `hayAdvertenciasCard`, que se
+                              // prende con cualquier aviso menor, así que el
+                              // ámbar no distinguía nada.
                               ? (!cuadra ? 'var(--warn)' : 'var(--ok)')
                               // REMITO: ámbar en parcial y en carga manual,
                               // porque en los dos el sistema no carga todo.

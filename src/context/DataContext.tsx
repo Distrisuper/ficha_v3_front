@@ -10,6 +10,7 @@ import type {
   RemitoListoPayload,
 } from '../types/events';
 import { EMPTY_FILTERS, type RemitoFilters } from '../utils/filtros';
+import { compararNombres } from '../utils/texto';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { DataContext, type DataContextValue } from './data-context';
 import { useSse } from './sse-context';
@@ -37,7 +38,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setCatalogosLoading(true);
     try {
       const [provs, sucs] = await Promise.all([proveedoresApi.list(), sucursalesApi.list()]);
-      setProveedores(provs ?? []);
+      /**
+       * Alfabético, acá además de en la API.
+       *
+       * El back ya ordena por nombre, pero con la collation de MySQL: los
+       * acentos y la Ñ no caen donde los espera alguien que lee en castellano, y
+       * el orden depende de una configuración de la base que esta pantalla no
+       * controla. `compararNombres` usa `localeCompare('es')`, así que la lista
+       * que ve el operador es siempre la misma sin importar dónde corra la base.
+       *
+       * Copia antes de ordenar: `sort` muta, y el array es el que devolvió el
+       * fetch.
+       */
+      setProveedores([...(provs ?? [])].sort((a, b) => compararNombres(a.nombre, b.nombre)));
       setSucursales(sucs ?? []);
     } finally {
       // El error se sigue propagando (ConfiguracionPage lo muestra al crear/editar).
